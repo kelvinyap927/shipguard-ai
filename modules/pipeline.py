@@ -1,5 +1,6 @@
 from modules.classifier import classify_email
 from modules.document_job import build_document_job
+from modules.hybrid_classifier import classify_email_hybrid
 
 
 def process_email(email):
@@ -12,6 +13,8 @@ def process_email(email):
         "category": None,
         "classification_confidence": None,
         "classification_scores": {},
+        "classification_source": None,
+        "classification_reason": None,
         "status": "processing",
         "reason": None,
         "document_job": None,
@@ -21,19 +24,38 @@ def process_email(email):
 
     try:
         # Step 1: Classify email
-        classification = classify_email(email)
+        classification = classify_email_hybrid(email)
 
         category = classification["category"]
         confidence = classification["confidence"]
+        classification_status = classification.get("status", "ok")
+        classification_source = classification.get("source", "rule")
+        classification_reason = classification.get("reason")
 
         result["category"] = category
         result["classification_confidence"] = confidence
-        result["classification_scores"] = classification["scores"]
+        result["classification_scores"] = classification.get("scores", {})
+        result["classification_source"] = classification_source
+        result["classification_reason"] = classification_reason
 
         audit_log.append({
             "step": "classification",
-            "message": f"Classified as {category} with {confidence} confidence"
+            "message": (
+                f"Classified as {category} with {confidence} confidence "
+                f"using {classification_source}"
+            )
         })
+
+        if classification_status == "needs_review":
+            result["status"] = "human_review"
+            result["reason"] = classification_reason
+
+            audit_log.append({
+                "step": "classification_review",
+                "message": "Classification requires human review"
+            })
+
+            return result
 
         # Step 2: Other email categories
         if category != "document_comparison":
