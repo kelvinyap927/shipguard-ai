@@ -1,5 +1,6 @@
 from modules.classifier import classify_email
 from modules.document_job import build_document_job
+from modules.extraction_job import run_extraction      # Member B
 
 
 def process_email(email):
@@ -46,6 +47,8 @@ def process_email(email):
     # Step 4: Human review
     if document_job["status"] == "human_review":
 
+        result["review_reason"] = document_job.get("review_reason")
+
         audit_log.append({
             "step": "attachment_check",
             "message": document_job["reason"]
@@ -76,5 +79,16 @@ def process_email(email):
         "step": "routing",
         "message": "Ready for extraction"
     })
+
+    # Step 6: Extract the 7 fields from the SI and the BL  (Member B)
+    extraction = run_extraction(document_job)
+
+    audit_log.extend(extraction.pop("audit"))
+
+    result["extraction"] = extraction
+    result["status"] = extraction["status"]           # "extracted" or "human_review"
+
+    if extraction["status"] == "human_review":
+        result["review_reason"] = extraction["review_reason"]
 
     return result

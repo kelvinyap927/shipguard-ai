@@ -13,6 +13,7 @@ def build_document_job(email):
             "email_id": email["email_id"],
             "status": "human_review",
             "reason": "Missing SI or BL attachment",
+            "review_reason": "missing_attachment",
             "si_file": si_file,
             "bl_file": bl_file
         }
