@@ -146,3 +146,68 @@ else:
     print("(no attachments/ folder here - skipped the scan checks)")
 
 print("all Member B extra checks passed")
+
+# ---------------------------------------------------------------------------
+# 10. Advanced quality engine
+# ---------------------------------------------------------------------------
+
+from modules.advanced_quality import evaluate
+
+QUALITY_DOC = """BILL OF LADING
+Shipper: ACME LTD
+Consignee: FOO GMBH
+Notify Party: FOO GMBH
+Port of Loading: NANTONG, CHINA
+Port of Discharge: KARACHI, PAKISTAN
+Container Count: 3 x 40'HC
+Gross Weight: 22,000 KG
+"""
+
+qdoc = extract_fields(
+    QUALITY_DOC,
+    method="text",
+)
+
+quality = qdoc["quality"]
+
+assert quality["validation_status"] in (
+    "PASS",
+    "VERIFY",
+)
+
+assert quality["quality_score"] > 0.70
+
+assert "shipper" in quality["field_quality"]
+
+assert "gross_weight_kg" in quality["provenance"]
+
+# Weight sanity check
+bad_fields = {
+    "container_count": 3,
+    "gross_weight_kg": 22000,
+}
+
+bad_evidence = {
+    field: {
+        "confidence": 0.98,
+        "note": None,
+        "source": "rule",
+    }
+    for field in FIELDS
+}
+
+bad_evidence["gross_weight_kg"]["raw_label"] = "Net Weight"
+
+quality = evaluate(
+    bad_fields,
+    bad_evidence,
+    "text",
+)
+
+assert any(
+    "gross_weight_from_net_weight_label"
+    in flag
+    for flag in quality["flags"]
+)
+
+print("advanced quality checks passed")
