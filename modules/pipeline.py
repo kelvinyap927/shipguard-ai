@@ -1,6 +1,6 @@
-from modules.classifier import classify_email
 from modules.document_job import build_document_job
 from modules.hybrid_classifier import classify_email_hybrid
+from modules.extraction_job import run_extraction
 
 
 def process_email(email):
@@ -17,6 +17,7 @@ def process_email(email):
         "classification_reason": None,
         "status": "processing",
         "reason": None,
+        "review_reason": None,
         "document_job": None,
         "audit_log": audit_log,
         "errors": errors
@@ -79,6 +80,7 @@ def process_email(email):
         if document_job["status"] == "human_review":
 
             result["reason"] = document_job["reason"]
+            result["review_reason"] = document_job.get("review_reason")
 
             audit_log.append({
                 "step": "attachment_check",
@@ -110,6 +112,18 @@ def process_email(email):
             "step": "routing",
             "message": "Ready for extraction"
         })
+
+        # Step 6: Extract the 7 fields from the SI and the BL  (Member B)
+        extraction = run_extraction(document_job)
+
+        audit_log.extend(extraction.pop("audit"))
+
+        result["extraction"] = extraction
+        result["status"] = extraction["status"]           # "extracted" or "human_review"
+
+        if extraction["status"] == "human_review":
+            result["review_reason"] = extraction["review_reason"]
+            result["reason"] = "; ".join(extraction["review_notes"]) or extraction["review_reason"]
 
         return result
 

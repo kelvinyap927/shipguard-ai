@@ -9,6 +9,7 @@ results = []
 status_counts = {
     "classified": 0,
     "ready_for_extraction": 0,
+    "extracted": 0,
     "human_review": 0,
     "failed": 0
 }
