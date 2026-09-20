@@ -3353,7 +3353,20 @@ with st.sidebar:
                 st.session_state["df"] = refreshed_df
                 st.session_state["comparison_df"] = refreshed_comparison
                 st.session_state["activity_log"] = []
-                st.session_state["refresh_message"] = "Workspace data refreshed."
+
+                for key in (
+                    "full_analysis_status",
+                    "full_analysis_index",
+                    "full_analysis_counts",
+                    "full_analysis_failures",
+                    "full_analysis_results",
+                    "full_analysis_summary",
+                ):
+                    st.session_state.pop(key, None)
+
+                st.session_state["refresh_message"] = (
+                    f"Workspace refreshed — {len(refreshed_df)} records loaded."
+                )
             except Exception:
                 # Never expose a traceback to the demo user.
                 # Restore the last known-good dataset and continue normally.
@@ -3373,8 +3386,9 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
-    if st.session_state.pop("refresh_message", None):
-        st.toast("Workspace refreshed safely.", icon="✓")
+    refresh_message = st.session_state.pop("refresh_message", None)
+    if refresh_message:
+        st.toast(refresh_message)
 
     st.markdown(
         '<div class="sidebar-user-box">',
