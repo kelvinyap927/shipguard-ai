@@ -8,10 +8,12 @@ BACKEND_AVAILABLE = True
 try:
     from modules.inbox import load_inbox
     from modules.classifier import classify_email
+    from modules.pipeline import process_email
 except (ModuleNotFoundError, ImportError):
     BACKEND_AVAILABLE = False
     load_inbox = None
     classify_email = None
+    process_email = None
 
 # ============================================================
 # PAGE CONFIG
@@ -855,6 +857,114 @@ def load_backend_comparison():
     return pd.DataFrame(DEFAULT_COMPARISON)
 
 
+@st.cache_data(show_spinner=False)
+def process_backend_email(email_id):
+    if not BACKEND_AVAILABLE or process_email is None:
+        return {
+            "status": "backend_unavailable",
+            "reason": "Backend processing is not available.",
+        }
+
+    try:
+        inbox = load_inbox()
+
+        email = next(
+            (
+                item
+                for item in inbox
+                if str(item.get("email_id")) == str(email_id)
+            ),
+            None,
+        )
+
+        if email is None:
+            return {
+                "status": "email_not_found",
+                "reason": f"Email {email_id} was not found.",
+            }
+
+        return process_email(email)
+
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "reason": str(exc),
+            "errors": [str(exc)],
+        }
+
+
+def verification_to_comparison(email_id, pipeline_result):
+    verification = pipeline_result.get("verification") or {}
+    field_results = verification.get("field_results") or {}
+
+    if not field_results:
+        return pd.DataFrame(
+            columns=[
+                "Shipment",
+                "Field",
+                "Shipping Instruction (SI)",
+                "Draft Bill of Lading (BL)",
+                "Status",
+                "Verification Reason",
+                "SI Confidence",
+                "BL Confidence",
+                "SI Source",
+                "BL Source",
+                "SI Normalized",
+                "BL Normalized",
+            ]
+        )
+
+    field_labels = {
+        "shipper": "Shipper",
+        "consignee": "Consignee",
+        "notify_party": "Notify Party",
+        "port_of_loading": "Port of Loading",
+        "port_of_discharge": "Port of Discharge",
+        "container_count": "Container Count",
+        "gross_weight_kg": "Gross Weight (KG)",
+    }
+
+    status_map = {
+        "MATCH": "Match",
+        "MISMATCH": "Discrepancy",
+        "REVIEW": "Needs Review",
+    }
+
+    rows = []
+
+    for field_name, field_result in field_results.items():
+        si = field_result.get("si") or {}
+        bl = field_result.get("bl") or {}
+
+        si_raw = si.get("raw")
+        bl_raw = bl.get("raw")
+
+        rows.append({
+            "Shipment": email_id,
+            "Field": field_labels.get(field_name, field_name),
+            "Shipping Instruction (SI)": (
+                "Missing" if si_raw is None else str(si_raw)
+            ),
+            "Draft Bill of Lading (BL)": (
+                "Missing" if bl_raw is None else str(bl_raw)
+            ),
+            "Status": status_map.get(
+                field_result.get("status"),
+                "Needs Review",
+            ),
+            "Verification Reason": field_result.get("reason"),
+            "SI Confidence": si.get("confidence"),
+            "BL Confidence": bl.get("confidence"),
+            "SI Source": si.get("source"),
+            "BL Source": bl.get("source"),
+            "SI Normalized": si.get("normalized"),
+            "BL Normalized": bl.get("normalized"),
+        })
+
+    return pd.DataFrame(rows)
+
+
 # ============================================================
 # SESSION STATE
 # ============================================================
@@ -1246,8 +1356,17 @@ def get_review_note(record_id):
 
 def get_comparison_for_record(record):
 
-    if comparison_df.empty:
+    record_id = record.get("ID")
 
+    if BACKEND_AVAILABLE and process_email is not None and record_id is not None:
+        pipeline_result = process_backend_email(record_id)
+
+        return verification_to_comparison(
+            record_id,
+            pipeline_result,
+        )
+
+    if comparison_df.empty:
         return pd.DataFrame(
             columns=[
                 "Field",
@@ -1259,17 +1378,12 @@ def get_comparison_for_record(record):
     shipment = record.get("Shipment")
 
     if "Shipment" in comparison_df.columns:
-
-        result = comparison_df[
+        return comparison_df[
             comparison_df["Shipment"].astype(str)
             == str(shipment)
         ].copy()
 
-    else:
-
-        result = comparison_df.copy()
-
-    return result
+    return comparison_df.copy()
 
 
 def normalize_comparison_value(value):
@@ -1311,6 +1425,9 @@ def build_comparison_statuses(comp_df):
         return comp_df.copy()
 
     result = comp_df.copy()
+
+    if "Status" in result.columns:
+        return result
 
     result["Status"] = result.apply(
         lambda row: comparison_status(
@@ -2735,6 +2852,17 @@ elif page_to_show == "Document Check Case":
                                 unsafe_allow_html=True,
                             )
 
+                        elif r["Status"] == "Needs Review":
+
+                            c4.markdown(
+                                """
+                                <span class="badge badge-orange">
+                                    Needs Review
+                                </span>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+
                         else:
 
                             c4.markdown(
@@ -3115,13 +3243,17 @@ elif page_to_show == "Document Check Case":
 
             discrepancies = get_discrepancies(comp)
 
-            discrepancy_count = len(discrepancies)
+            match_count = int(
+                (comp["Status"] == "Match").sum()
+            ) if "Status" in comp.columns else 0
 
-            plural_text = (
-                "discrepancy"
-                if discrepancy_count == 1
-                else "discrepancies"
-            )
+            discrepancy_count = int(
+                (comp["Status"] == "Discrepancy").sum()
+            ) if "Status" in comp.columns else 0
+
+            review_count = int(
+                (comp["Status"] == "Needs Review").sum()
+            ) if "Status" in comp.columns else 0
 
             st.markdown(
                 f"""
@@ -3132,11 +3264,31 @@ elif page_to_show == "Document Check Case":
                     </div>
 
                     <div class="ai-summary-label">
-                        Issues detected
+                        Verified Matches
                     </div>
 
                     <div class="ai-summary-value">
-                        {discrepancy_count} {plural_text}
+                        {match_count}
+                    </div>
+
+                    <br>
+
+                    <div class="ai-summary-label">
+                        Discrepancies
+                    </div>
+
+                    <div class="ai-summary-value">
+                        {discrepancy_count}
+                    </div>
+
+                    <br>
+
+                    <div class="ai-summary-label">
+                        Needs Review
+                    </div>
+
+                    <div class="ai-summary-value">
+                        {review_count}
                     </div>
                 """,
                 unsafe_allow_html=True,
@@ -3231,44 +3383,188 @@ elif page_to_show == "Document Check Case":
                 unsafe_allow_html=True,
             )
 
-            if not discrepancies.empty:
+            reviews = (
+                comp[comp["Status"] == "Needs Review"].copy()
+                if "Status" in comp.columns
+                else pd.DataFrame()
+            )
 
-                st.write(
-                    "The system found discrepancy data in "
-                    "the current document comparison."
+            backend_result = {}
+
+            if (
+                BACKEND_AVAILABLE
+                and process_email is not None
+                and record.get("ID") is not None
+            ):
+                backend_result = process_backend_email(
+                    record.get("ID")
                 )
 
-                st.markdown(
-                    "<ul style='font-size:12px;color:#60748d;'>",
-                    unsafe_allow_html=True,
+            explanation_shown = False
+
+            if not discrepancies.empty:
+
+                explanation_shown = True
+
+                st.write(
+                    "Deterministic verification found field-level "
+                    "discrepancies between the SI and draft BL."
                 )
 
                 for _, discrepancy in discrepancies.iterrows():
 
+                    si_confidence = discrepancy.get(
+                        "SI Confidence"
+                    )
+
+                    bl_confidence = discrepancy.get(
+                        "BL Confidence"
+                    )
+
+                    si_confidence_text = (
+                        "N/A"
+                        if pd.isna(si_confidence)
+                        else f"{float(si_confidence) * 100:.0f}%"
+                    )
+
+                    bl_confidence_text = (
+                        "N/A"
+                        if pd.isna(bl_confidence)
+                        else f"{float(bl_confidence) * 100:.0f}%"
+                    )
+
                     st.markdown(
                         f"""
-                        <li>
-                            <b>{safe_text(discrepancy["Field"])}</b>:
-                            SI =
-                            {safe_text(discrepancy["Shipping Instruction (SI)"])}
-                            · BL =
-                            {safe_text(discrepancy["Draft Bill of Lading (BL)"])}
-                        </li>
+                        <hr>
+
+                        <b>{safe_text(discrepancy["Field"])}</b><br>
+                        SI: {safe_text(discrepancy["Shipping Instruction (SI)"])}<br>
+                        BL: {safe_text(discrepancy["Draft Bill of Lading (BL)"])}<br>
+                        Reason: {safe_text(discrepancy.get("Verification Reason"))}<br>
+                        Confidence: SI {safe_text(si_confidence_text)}
+                        · BL {safe_text(bl_confidence_text)}<br>
+                        Source: SI {safe_text(discrepancy.get("SI Source"))}
+                        · BL {safe_text(discrepancy.get("BL Source"))}
                         """,
                         unsafe_allow_html=True,
                     )
 
+            if not reviews.empty:
+
+                explanation_shown = True
+
+                st.write(
+                    "One or more fields could not be verified "
+                    "reliably and require human review."
+                )
+
+                for _, review in reviews.iterrows():
+
+                    si_confidence = review.get(
+                        "SI Confidence"
+                    )
+
+                    bl_confidence = review.get(
+                        "BL Confidence"
+                    )
+
+                    si_confidence_text = (
+                        "N/A"
+                        if pd.isna(si_confidence)
+                        else f"{float(si_confidence) * 100:.0f}%"
+                    )
+
+                    bl_confidence_text = (
+                        "N/A"
+                        if pd.isna(bl_confidence)
+                        else f"{float(bl_confidence) * 100:.0f}%"
+                    )
+
+                    st.markdown(
+                        f"""
+                        <hr>
+
+                        <b>{safe_text(review["Field"])}</b><br>
+                        Status: Needs Review<br>
+                        SI: {safe_text(review["Shipping Instruction (SI)"])}<br>
+                        BL: {safe_text(review["Draft Bill of Lading (BL)"])}<br>
+                        Reason: {safe_text(review.get("Verification Reason"))}<br>
+                        Confidence: SI {safe_text(si_confidence_text)}
+                        · BL {safe_text(bl_confidence_text)}<br>
+                        Source: SI {safe_text(review.get("SI Source"))}
+                        · BL {safe_text(review.get("BL Source"))}
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+            if (
+                comp.empty
+                and backend_result.get("status") == "human_review"
+            ):
+
+                explanation_shown = True
+
+                review_reason = (
+                    backend_result.get("reason")
+                    or backend_result.get("review_reason")
+                    or "Manual review is required."
+                )
+
+                st.write(
+                    "Automatic field comparison could not be completed."
+                )
+
                 st.markdown(
-                    "</ul>",
+                    f"""
+                    <b>Human Review Required</b><br>
+                    Reason: {safe_text(review_reason)}
+                    """,
                     unsafe_allow_html=True,
                 )
 
-            else:
+            if (
+                comp.empty
+                and backend_result.get("status")
+                in {
+                    "failed",
+                    "backend_unavailable",
+                    "email_not_found",
+                }
+            ):
+
+                explanation_shown = True
+
+                failure_reason = (
+                    backend_result.get("reason")
+                    or "Backend processing was not completed."
+                )
 
                 st.write(
-                    "No discrepancy is currently detected "
-                    "from the comparison data."
+                    "The comparison could not be completed."
                 )
+
+                st.markdown(
+                    f"""
+                    <b>Processing Status</b><br>
+                    Reason: {safe_text(failure_reason)}
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+            if not explanation_shown:
+
+                if not comp.empty:
+
+                    st.write(
+                        "All comparable fields were verified "
+                        "with no discrepancy or review condition."
+                    )
+
+                else:
+
+                    st.write(
+                        "No comparison data is currently available."
+                    )
 
             st.markdown(
                 "</div>",
