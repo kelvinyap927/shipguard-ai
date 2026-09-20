@@ -5,6 +5,11 @@ import html
 import re
 from modules.inbox import load_inbox
 from modules.classifier import classify_email
+from modules.pipeline import process_email
+from modules.batch_processor import process_batch
+from modules.result_aggregator import aggregate_result
+from modules.verification_adapter import build_verification_payload
+from member_c_verifier import apply_human_correction
 
 # ============================================================
 # PAGE CONFIGURATION
@@ -1701,6 +1706,234 @@ def load_backend_comparison():
     return pd.DataFrame(DEFAULT_COMPARISON)
 
 
+
+@st.cache_data(show_spinner=False)
+def process_backend_email(email_id):
+    try:
+        inbox = load_inbox()
+
+        email = next(
+            (
+                item
+                for item in inbox
+                if str(item.get("email_id")) == str(email_id)
+            ),
+            None,
+        )
+
+        if email is None:
+            return {
+                "status": "email_not_found",
+                "reason": f"Email {email_id} was not found.",
+            }
+
+        pipeline_result = process_email(email)
+
+        return aggregate_result(
+            email,
+            pipeline_result,
+        )
+
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "reason": str(exc),
+            "errors": [str(exc)],
+        }
+
+
+def get_effective_backend_result(email_id):
+    base_result = process_backend_email(email_id)
+
+    correction_result = (
+        st.session_state
+        .get("human_correction_results", {})
+        .get(str(email_id))
+    )
+
+    if not correction_result:
+        return base_result
+
+    result = dict(base_result)
+    result["verification"] = correction_result
+    result["human_review"] = correction_result.get(
+        "human_review"
+    )
+
+    status_map = {
+        "OK": "verified",
+        "MISMATCH": "mismatch",
+        "NEEDS_REVIEW": "human_review",
+    }
+
+    result["status"] = status_map.get(
+        correction_result.get("status"),
+        result.get("status"),
+    )
+
+    result["review_reason"] = correction_result.get(
+        "review_reason"
+    )
+
+    result["reason"] = correction_result.get(
+        "message",
+        result.get("reason"),
+    )
+
+    return result
+
+
+def apply_record_human_correction(
+    email_id,
+    si_corrections,
+    bl_corrections,
+    reviewer,
+    note,
+):
+    inbox = load_inbox()
+
+    email = next(
+        (
+            item
+            for item in inbox
+            if str(item.get("email_id")) == str(email_id)
+        ),
+        None,
+    )
+
+    if email is None:
+        raise ValueError(
+            f"Email {email_id} was not found."
+        )
+
+    pipeline_result = process_email(email)
+    extraction = pipeline_result.get("extraction") or {}
+
+    payload = build_verification_payload(extraction)
+
+    key = str(email_id)
+
+    saved_values = (
+        st.session_state["human_correction_values"]
+        .get(
+            key,
+            {
+                "si": {},
+                "bl": {},
+            },
+        )
+    )
+
+    all_si_corrections = dict(
+        saved_values.get("si") or {}
+    )
+
+    all_bl_corrections = dict(
+        saved_values.get("bl") or {}
+    )
+
+    all_si_corrections.update(
+        si_corrections or {}
+    )
+
+    all_bl_corrections.update(
+        bl_corrections or {}
+    )
+
+    result = apply_human_correction(
+        payload,
+        si_corrections=all_si_corrections,
+        bl_corrections=all_bl_corrections,
+        email_id=email_id,
+        category="BL_COMPARISON",
+        reviewer=reviewer,
+        note=note,
+    )
+
+    st.session_state["human_correction_values"][key] = {
+        "si": all_si_corrections,
+        "bl": all_bl_corrections,
+    }
+
+    st.session_state["human_correction_results"][key] = result
+
+    return result
+
+
+def verification_to_comparison(email_id, pipeline_result):
+    verification = pipeline_result.get("verification") or {}
+    field_results = verification.get("field_results") or {}
+
+    columns = [
+        "Shipment",
+        "Field",
+        "Shipping Instruction (SI)",
+        "Draft Bill of Lading (BL)",
+        "Status",
+        "Verification Reason",
+        "SI Confidence",
+        "BL Confidence",
+        "SI Source",
+        "BL Source",
+        "SI Normalized",
+        "BL Normalized",
+    ]
+
+    if not field_results:
+        return pd.DataFrame(columns=columns)
+
+    field_labels = {
+        "shipper": "Shipper",
+        "consignee": "Consignee",
+        "notify_party": "Notify Party",
+        "port_of_loading": "Port of Loading",
+        "port_of_discharge": "Port of Discharge",
+        "container_count": "Container Count",
+        "gross_weight_kg": "Gross Weight (KG)",
+    }
+
+    status_map = {
+        "MATCH": "Match",
+        "MISMATCH": "Discrepancy",
+        "REVIEW": "Needs Review",
+    }
+
+    rows = []
+
+    for field_name, field_result in field_results.items():
+        si = field_result.get("si") or {}
+        bl = field_result.get("bl") or {}
+
+        si_raw = si.get("raw")
+        bl_raw = bl.get("raw")
+
+        rows.append(
+            {
+                "Shipment": email_id,
+                "Field": field_labels.get(field_name, field_name),
+                "Shipping Instruction (SI)": (
+                    "Missing" if si_raw is None else str(si_raw)
+                ),
+                "Draft Bill of Lading (BL)": (
+                    "Missing" if bl_raw is None else str(bl_raw)
+                ),
+                "Status": status_map.get(
+                    field_result.get("status"),
+                    "Needs Review",
+                ),
+                "Verification Reason": field_result.get("reason"),
+                "SI Confidence": si.get("confidence"),
+                "BL Confidence": bl.get("confidence"),
+                "SI Source": si.get("source"),
+                "BL Source": bl.get("source"),
+                "SI Normalized": si.get("normalized"),
+                "BL Normalized": bl.get("normalized"),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
 # ============================================================
 # SESSION STATE
 # ============================================================
@@ -1739,6 +1972,30 @@ if "activity_ids" not in st.session_state:
 
 if "review_notes" not in st.session_state:
     st.session_state["review_notes"] = {}
+
+if "human_correction_results" not in st.session_state:
+    st.session_state["human_correction_results"] = {}
+
+if "human_correction_values" not in st.session_state:
+    st.session_state["human_correction_values"] = {}
+
+if st.session_state.get("human_correction_logic_version") != 3:
+    st.session_state["human_correction_results"] = {}
+    st.session_state["human_correction_values"] = {}
+
+    correction_widget_prefixes = (
+        "correct_si_",
+        "correct_bl_",
+        "reference_si_",
+        "reviewer_",
+        "correction_note_",
+    )
+
+    for state_key in list(st.session_state.keys()):
+        if state_key.startswith(correction_widget_prefixes):
+            del st.session_state[state_key]
+
+    st.session_state["human_correction_logic_version"] = 3
 
 if "logged_out" not in st.session_state:
     st.session_state["logged_out"] = False
@@ -1856,13 +2113,48 @@ def priority_badge(text):
 
 
 def status_badge(text):
-    cls = "badge-green" if text == "Done" else "badge-orange"
+    classes = {
+        "Done": "badge-green",
+        "Verified": "badge-green",
+        "Discrepancy": "badge-red",
+        "Needs Review": "badge-orange",
+        "Under Review": "badge-orange",
+        "Processing Error": "badge-red",
+    }
+
+    cls = classes.get(text, "badge-blue")
 
     return f"""
     <span class="badge {cls}">
         {safe_text(text)}
     </span>
     """
+
+
+def get_record_display_status(record):
+    current_status = record.get("Status")
+
+    if record.get("Type") != "Document Check":
+        return current_status or "Done"
+
+    record_id = record.get("ID")
+
+    if record_id is None:
+        return current_status or "Under Review"
+
+    pipeline_result = get_effective_backend_result(record_id)
+
+    status_map = {
+        "verified": "Verified",
+        "mismatch": "Discrepancy",
+        "human_review": "Needs Review",
+        "failed": "Processing Error",
+    }
+
+    return status_map.get(
+        pipeline_result.get("status"),
+        current_status or "Under Review",
+    )
 
 
 def confidence_badge(value):
@@ -2097,9 +2389,17 @@ def get_review_note(record_id):
 
 
 def get_comparison_for_record(record):
+    record_id = record.get("ID")
+
+    if record_id is not None:
+        pipeline_result = get_effective_backend_result(record_id)
+
+        return verification_to_comparison(
+            record_id,
+            pipeline_result,
+        )
 
     if comparison_df.empty:
-
         return pd.DataFrame(
             columns=[
                 "Field",
@@ -2111,18 +2411,12 @@ def get_comparison_for_record(record):
     shipment = record.get("Shipment")
 
     if "Shipment" in comparison_df.columns:
-
-        result = comparison_df[
+        return comparison_df[
             comparison_df["Shipment"].astype(str)
             == str(shipment)
         ].copy()
 
-    else:
-
-        result = comparison_df.copy()
-
-    return result
-
+    return comparison_df.copy()
 
 def normalize_comparison_value(value):
 
@@ -2400,6 +2694,20 @@ if st.session_state["logged_out"]:
     st.stop()
 
 
+if "full_analysis_results" not in st.session_state:
+    st.session_state["full_analysis_results"] = None
+
+if "full_analysis_summary" not in st.session_state:
+    st.session_state["full_analysis_summary"] = {
+        "processed": 0,
+        "total": len(df),
+        "ok": 0,
+        "mismatch": 0,
+        "needs_review": 0,
+        "failed": 0,
+    }
+
+
 # ============================================================
 # SIDEBAR
 # ============================================================
@@ -2556,12 +2864,14 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
+    sidebar_summary = st.session_state.get("full_analysis_summary") or {}
+
     under_review = int(
-        (df["Status"] == "Under Review").sum()
+        sidebar_summary.get("needs_review", 0)
     )
 
     done = int(
-        (df["Status"] == "Done").sum()
+        sidebar_summary.get("processed", 0)
     )
 
     status_c1, status_c2 = st.columns(2)
@@ -2572,7 +2882,7 @@ with st.sidebar:
             f"""
             <div class="status-card">
                 <div class="status-label">
-                    Under review
+                    Needs review
                 </div>
 
                 <div class="status-value">
@@ -2589,7 +2899,7 @@ with st.sidebar:
             f"""
             <div class="status-card">
                 <div class="status-label">
-                    Done
+                    Analysed
                 </div>
 
                 <div class="status-value">
@@ -2809,11 +3119,186 @@ if page_to_show == "Home":
 
     st.write("")
 
+    analysis_total_hint = len(df)
+
+    run_col, analysis_info_col = st.columns([1.5, 3.5])
+
+    with run_col:
+        run_full_analysis = st.button(
+            f"Run Full Analysis — {analysis_total_hint} emails",
+            type="primary",
+            use_container_width=True,
+            key="run_full_analysis",
+        )
+
+    with analysis_info_col:
+        existing_summary = (
+            st.session_state.get("full_analysis_summary") or {}
+        )
+
+        existing_processed = int(
+            existing_summary.get("processed", 0)
+        )
+
+        if existing_processed:
+            st.caption(
+                "Latest analysis: "
+                f"{existing_processed}/"
+                f"{existing_summary.get('total', analysis_total_hint)} processed · "
+                f"{existing_summary.get('ok', 0)} OK · "
+                f"{existing_summary.get('mismatch', 0)} mismatch · "
+                f"{existing_summary.get('needs_review', 0)} needs review · "
+                f"{existing_summary.get('failed', 0)} failed"
+            )
+        else:
+            st.caption(
+                "Run the end-to-end pipeline across the complete inbox."
+            )
+
+    if run_full_analysis:
+        try:
+            analysis_emails = list(load_inbox())
+            analysis_total = len(analysis_emails)
+
+            progress_bar = st.progress(0)
+            progress_text = st.empty()
+
+            metric_columns = st.columns(5)
+            processed_metric = metric_columns[0].empty()
+            ok_metric = metric_columns[1].empty()
+            mismatch_metric = metric_columns[2].empty()
+            review_metric = metric_columns[3].empty()
+            failed_metric = metric_columns[4].empty()
+
+            latest_progress = {
+                "processed": 0,
+                "total": analysis_total,
+                "counts": {
+                    "OK": 0,
+                    "MISMATCH": 0,
+                    "NEEDS_REVIEW": 0,
+                },
+                "pipeline_failures": 0,
+            }
+
+            def update_analysis_progress(event):
+                latest_progress.update(event)
+
+                processed = int(event.get("processed", 0))
+                total = int(event.get("total", analysis_total))
+                counts = event.get("counts") or {}
+                failures = int(event.get("pipeline_failures", 0))
+
+                percentage = (
+                    int(processed / total * 100)
+                    if total
+                    else 0
+                )
+
+                progress_bar.progress(
+                    min(percentage, 100)
+                )
+
+                progress_text.caption(
+                    f"Processing {processed}/{total} emails"
+                )
+
+                processed_metric.metric(
+                    "Processed",
+                    processed,
+                )
+                ok_metric.metric(
+                    "OK",
+                    int(counts.get("OK", 0)),
+                )
+                mismatch_metric.metric(
+                    "Mismatch",
+                    int(counts.get("MISMATCH", 0)),
+                )
+                review_metric.metric(
+                    "Needs Review",
+                    int(counts.get("NEEDS_REVIEW", 0)),
+                )
+                failed_metric.metric(
+                    "Failed",
+                    failures,
+                )
+
+            analysis_results = process_batch(
+                analysis_emails,
+                progress_callback=update_analysis_progress,
+            )
+
+            final_counts = latest_progress.get("counts") or {}
+
+            st.session_state["full_analysis_results"] = (
+                analysis_results
+            )
+
+            st.session_state["full_analysis_summary"] = {
+                "processed": int(
+                    latest_progress.get(
+                        "processed",
+                        len(analysis_results),
+                    )
+                ),
+                "total": analysis_total,
+                "ok": int(final_counts.get("OK", 0)),
+                "mismatch": int(
+                    final_counts.get("MISMATCH", 0)
+                ),
+                "needs_review": int(
+                    final_counts.get("NEEDS_REVIEW", 0)
+                ),
+                "failed": int(
+                    latest_progress.get(
+                        "pipeline_failures",
+                        0,
+                    )
+                ),
+            }
+
+            progress_bar.progress(100)
+            progress_text.caption(
+                f"Completed {analysis_total}/{analysis_total} emails"
+            )
+
+            st.success(
+                "Full inbox analysis completed successfully."
+            )
+
+            st.rerun()
+
+        except Exception as exc:
+            st.error(
+                f"Full analysis failed: {exc}"
+            )
+
     total_records = len(df)
-    review_count = int((df["Status"] == "Under Review").sum())
-    completed_count = int((df["Status"] == "Done").sum())
+    analysis_summary = (
+        st.session_state.get("full_analysis_summary") or {}
+    )
+
+    processed_count = int(
+        analysis_summary.get("processed", 0)
+    )
+    ok_count = int(
+        analysis_summary.get("ok", 0)
+    )
+    mismatch_count = int(
+        analysis_summary.get("mismatch", 0)
+    )
+    review_count = int(
+        analysis_summary.get("needs_review", 0)
+    )
+    failed_count = int(
+        analysis_summary.get("failed", 0)
+    )
+
+    action_queue = mismatch_count + review_count
+
     completion_rate = (
-        (completed_count / total_records * 100)
+        (processed_count / total_records * 100)
         if total_records else 0
     )
 
@@ -2832,10 +3317,10 @@ if page_to_show == "Home":
             </div>
             <div class="command-chip">
                 <div class="command-chip-label">Action queue</div>
-                <div class="command-chip-value">{review_count}</div>
+                <div class="command-chip-value">{action_queue}</div>
             </div>
             <div class="command-chip">
-                <div class="command-chip-label">Completion rate</div>
+                <div class="command-chip-label">Analysis coverage</div>
                 <div class="command-chip-value">{completion_rate:.0f}%</div>
             </div>
         </div>
@@ -2889,7 +3374,7 @@ if page_to_show == "Home":
                 <div class="sg-kpi-icon">✓</div>
                 <div class="sg-insight-title">Processing complete</div>
                 <div class="sg-insight-value">{completion_rate:.0f}%</div>
-                <div class="sg-insight-copy">Records completed without remaining review work.</div>
+                <div class="sg-insight-copy">All records have completed automated analysis.</div>
                 <div class="sg-progress"><span style="width:{min(completion_rate,100):.0f}%"></span></div>
             </div>
         </div>
@@ -3666,7 +4151,7 @@ elif page_to_show == "Document Check Case":
 
         {priority_badge(record["Priority"])}
 
-        {status_badge(record.get("Status", "Under Review"))}
+        {status_badge(get_record_display_status(record))}
 
         <span style="
             color:#70839a;
@@ -4135,7 +4620,247 @@ elif page_to_show == "Document Check Case":
                         "Review note saved."
                     )
 
+                st.markdown("---")
+                st.markdown("### Human Correction & Re-verification")
+
+                review_comp = build_comparison_statuses(
+                    get_comparison_for_record(record)
+                )
+
+                review_discrepancies = get_discrepancies(
+                    review_comp
+                )
+
+                correction_field_map = {
+                    "Shipper": "shipper",
+                    "Consignee": "consignee",
+                    "Notify Party": "notify_party",
+                    "Port of Loading": "port_of_loading",
+                    "Port of Discharge": "port_of_discharge",
+                    "Container Count": "container_count",
+                    "Gross Weight (KG)": "gross_weight_kg",
+                }
+
+                correction_inputs = []
+
+                if not review_discrepancies.empty:
+
+                    st.caption(
+                        "Correct extracted values and run the same verification logic again."
+                    )
+
+                    with st.form(
+                        key=f"human_correction_form_{record['ID']}"
+                    ):
+
+                        for _, correction_row in review_discrepancies.iterrows():
+
+                            correction_field = correction_row[
+                                "Field"
+                            ]
+
+                            canonical_field = (
+                                correction_field_map.get(
+                                    correction_field
+                                )
+                            )
+
+                            if not canonical_field:
+                                continue
+
+                            original_si = str(
+                                correction_row[
+                                    "Shipping Instruction (SI)"
+                                ]
+                            )
+
+                            original_bl = str(
+                                correction_row[
+                                    "Draft Bill of Lading (BL)"
+                                ]
+                            )
+
+                            st.markdown(
+                                f"**{correction_field}**"
+                            )
+
+                            edit_si_col, edit_bl_col = st.columns(2)
+
+                            with edit_si_col:
+                                st.text_input(
+                                    "Shipping Instruction (reference)",
+                                    value=original_si,
+                                    disabled=True,
+                                    key=(
+                                        f"reference_si_v3_"
+                                        f"{record['ID']}_"
+                                        f"{canonical_field}"
+                                    ),
+                                )
+
+                                edited_si = original_si
+
+                            with edit_bl_col:
+                                edited_bl = st.text_input(
+                                    "Draft Bill of Lading",
+                                    value=original_bl,
+                                    key=(
+                                        f"correct_bl_v3_"
+                                        f"{record['ID']}_"
+                                        f"{canonical_field}"
+                                    ),
+                                )
+
+                            correction_inputs.append(
+                                {
+                                    "field": canonical_field,
+                                    "original_si": original_si,
+                                    "original_bl": original_bl,
+                                    "edited_si": edited_si,
+                                    "edited_bl": edited_bl,
+                                }
+                            )
+
+                        reviewer_name = st.text_input(
+                            "Reviewer",
+                            value=USER_NAME,
+                            key=f"reviewer_{record['ID']}",
+                        )
+
+                        correction_note = st.text_area(
+                            "Correction note",
+                            placeholder=(
+                                "Explain why the correction was made..."
+                            ),
+                            key=f"correction_note_{record['ID']}",
+                        )
+
+                        apply_correction = st.form_submit_button(
+                            "Apply & Re-verify",
+                            type="primary",
+                            use_container_width=True,
+                        )
+
+                    if apply_correction:
+
+                        si_corrections = {}
+                        bl_corrections = {}
+
+                        for correction_item in correction_inputs:
+
+                            field = correction_item["field"]
+
+                            if (
+                                correction_item["edited_si"].strip()
+                                != correction_item["original_si"].strip()
+                            ):
+                                si_corrections[field] = (
+                                    correction_item["edited_si"].strip()
+                                )
+
+                            if (
+                                correction_item["edited_bl"].strip()
+                                != correction_item["original_bl"].strip()
+                            ):
+                                bl_corrections[field] = (
+                                    correction_item["edited_bl"].strip()
+                                )
+
+                        if not si_corrections and not bl_corrections:
+                            st.warning(
+                                "Change at least one value before re-verifying."
+                            )
+
+                        else:
+                            correction_result = (
+                                apply_record_human_correction(
+                                    record["ID"],
+                                    si_corrections,
+                                    bl_corrections,
+                                    reviewer_name,
+                                    correction_note,
+                                )
+                            )
+
+                            st.success(
+                                "Re-verification completed: "
+                                f"{correction_result.get('status')}"
+                            )
+
+                            st.rerun()
+
+                correction_result = (
+                    st.session_state[
+                        "human_correction_results"
+                    ].get(
+                        str(record["ID"])
+                    )
+                )
+
+                if correction_result:
+
+                    human_review = (
+                        correction_result.get(
+                            "human_review"
+                        ) or {}
+                    )
+
+                    st.markdown("#### Audit Trail")
+
+                    st.caption(
+                        "Reviewer: "
+                        f"{human_review.get('reviewer') or 'Unknown'}"
+                        " · "
+                        "Reviewed at: "
+                        f"{human_review.get('reviewed_at') or 'Unknown'}"
+                    )
+
+                    for change in human_review.get(
+                        "changes",
+                        [],
+                    ):
+                        st.write(
+                            f"{change.get('side')}.{change.get('field')}: "
+                            f"{change.get('before')} → "
+                            f"{change.get('after')}"
+                        )
+
+                    correction_status = correction_result.get(
+                        "status"
+                    )
+
+                    if correction_status == "OK":
+                        st.success(
+                            "Re-verification passed. No mismatch detected."
+                        )
+                    elif correction_status == "MISMATCH":
+                        st.error(
+                            "Re-verification completed. Discrepancies remain."
+                        )
+                    else:
+                        st.warning(
+                            "This case still requires human review."
+                        )
+
         with side:
+
+            backend_result = get_effective_backend_result(
+                record.get("ID")
+            )
+
+            evidence_map = (
+                backend_result.get("evidence") or {}
+            )
+
+            evidence_field_map = {
+                "Shipper": "shipper",
+                "Consignee": "consignee",
+                "Notify Party": "notify_party",
+                "Port of Loading": "port_of_loading",
+                "Port of Discharge": "port_of_discharge",
+                "Container Count": "container_count",
+                "Gross Weight (KG)": "gross_weight_kg",
+            }
 
             comp = build_comparison_statuses(
                 get_comparison_for_record(record)
@@ -4189,6 +4914,24 @@ elif page_to_show == "Document Check Case":
                         bl_value,
                     )
 
+                    evidence_key = evidence_field_map.get(
+                        field_name
+                    )
+
+                    field_evidence = (
+                        evidence_map.get(evidence_key, {})
+                        if evidence_key
+                        else {}
+                    )
+
+                    si_evidence = (
+                        field_evidence.get("si") or {}
+                    )
+
+                    bl_evidence = (
+                        field_evidence.get("bl") or {}
+                    )
+
                     st.markdown(
                         f"""
                         <hr>
@@ -4223,6 +4966,80 @@ elif page_to_show == "Document Check Case":
                         """,
                         unsafe_allow_html=True,
                     )
+
+                    if si_evidence or bl_evidence:
+
+                        si_confidence = si_evidence.get(
+                            "confidence"
+                        )
+                        bl_confidence = bl_evidence.get(
+                            "confidence"
+                        )
+
+                        si_confidence_text = (
+                            f"{float(si_confidence) * 100:.0f}%"
+                            if si_confidence is not None
+                            else "N/A"
+                        )
+
+                        bl_confidence_text = (
+                            f"{float(bl_confidence) * 100:.0f}%"
+                            if bl_confidence is not None
+                            else "N/A"
+                        )
+
+                        st.markdown(
+                            """
+                            <div class="ai-summary-label">
+                                Evidence Grounding
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+                        with st.expander(
+                            f"View evidence for {field_name}"
+                        ):
+
+                            st.markdown(
+                                "**Shipping Instruction evidence**"
+                            )
+
+                            st.write(
+                                si_evidence.get(
+                                    "snippet",
+                                    "No evidence available.",
+                                )
+                            )
+
+                            st.caption(
+                                "Confidence: "
+                                f"{si_confidence_text} · "
+                                "Source: "
+                                f"{si_evidence.get('source', 'N/A')} · "
+                                "Method: "
+                                f"{si_evidence.get('method', 'N/A')}"
+                            )
+
+                            st.markdown(
+                                "**Draft Bill of Lading evidence**"
+                            )
+
+                            st.write(
+                                bl_evidence.get(
+                                    "snippet",
+                                    "No evidence available.",
+                                )
+                            )
+
+                            st.caption(
+                                "Confidence: "
+                                f"{bl_confidence_text} · "
+                                "Source: "
+                                f"{bl_evidence.get('source', 'N/A')} · "
+                                "Method: "
+                                f"{bl_evidence.get('method', 'N/A')}"
+                            )
 
                     if difference is not None:
 
