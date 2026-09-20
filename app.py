@@ -3,20 +3,11 @@ import pandas as pd
 from datetime import datetime
 import html
 import re
-BACKEND_AVAILABLE = True
-
-try:
-    from modules.inbox import load_inbox
-    from modules.classifier import classify_email
-    from modules.pipeline import process_email
-except (ModuleNotFoundError, ImportError):
-    BACKEND_AVAILABLE = False
-    load_inbox = None
-    classify_email = None
-    process_email = None
+from modules.inbox import load_inbox
+from modules.classifier import classify_email
 
 # ============================================================
-# PAGE CONFIG
+# PAGE CONFIGURATION
 # ============================================================
 
 st.set_page_config(
@@ -28,16 +19,11 @@ st.set_page_config(
 
 
 # ------------------------------------------------------------
-# BUGFIX: st.markdown(..., unsafe_allow_html=True) 里的 HTML
-# 字符串是按 Python 源码缩进写的（比如缩进 12/16 个空格）。
-# Markdown 规范里，一段文字整体缩进 4 个空格以上会被当成
-# "代码块"处理，于是浏览器只会把这些 <div>/<span> 标签当成
-# 纯文本打印出来，而不是渲染成卡片——这正是很多页面点进去
-# 显示"乱码"（原始 HTML 标签）的根本原因。
-# 这里给 st.markdown 打一个全局补丁：只要传了
-# unsafe_allow_html=True，就先把每一行的前导空白去掉，再交给
-# 原始的 st.markdown 渲染。不影响其他不带 unsafe_allow_html
-# 的普通文字调用。
+# HTML rendering compatibility fix.
+# Multiline HTML passed to st.markdown can accidentally become a Markdown
+# code block when Python indentation is preserved. The wrapper below removes
+# leading whitespace only for unsafe HTML blocks, so cards and badges render
+# consistently without changing normal Markdown behaviour.
 # ------------------------------------------------------------
 _original_markdown = st.markdown
 
@@ -52,17 +38,25 @@ st.markdown = _dedented_markdown
 
 
 # ============================================================
-# USER CONFIG
+# USER CONFIGURATION
 # ============================================================
 
 USER_NAME = "user"
 USER_ROLE = "Operations Executive"
 USER_INITIALS = "SY"
+APP_VERSION = "2.0"
+APP_STATUS = "Operational"
 
 
 # ============================================================
 # THEME / CSS
 # ============================================================
+
+# App-level theme.  This is independent of Streamlit's browser menu so the
+# entire ShipGuard interface (not just Settings) can switch together.
+if "app_theme" not in st.session_state:
+    st.session_state["app_theme"] = "light"
+
 
 st.markdown(
     """
@@ -294,7 +288,7 @@ li,
 }
 
 .panel {
-    background: #ffffff;
+    background: #f8fafc;
     border: 1px solid #e3ebf5;
     border-radius: 14px;
     padding: 18px;
@@ -335,7 +329,7 @@ hr {
 .metric-card {
     width: 100%;
     min-height: 92px;
-    background: #ffffff;
+    background: #f8fafc;
     border: 1px solid #e3ebf5;
     border-radius: 12px;
     padding: 11px 13px;
@@ -387,7 +381,7 @@ hr {
    ============================================================ */
 
 .priority-wrapper {
-    background: #ffffff;
+    background: #f8fafc;
     border: 1px solid #e3ebf5;
     border-radius: 14px;
     padding: 18px;
@@ -411,7 +405,7 @@ hr {
     border: 1px solid #e2e9f1;
     border-radius: 11px;
     overflow: hidden;
-    background: #ffffff;
+    background: #f8fafc;
 }
 
 .table-head {
@@ -541,7 +535,7 @@ hr {
 }
 
 .action-box {
-    background: #ffffff;
+    background: #f8fafc;
     border: 1px solid #e1eaf4;
     border-radius: 12px;
     padding: 14px;
@@ -679,7 +673,7 @@ section[data-testid="stSidebar"] div[data-testid="stPopover"] button {
 .logout-box {
     max-width: 520px;
     margin: 100px auto;
-    background: #ffffff;
+    background: #f8fafc;
     border: 1px solid #e3ebf5;
     border-radius: 16px;
     padding: 35px;
@@ -688,10 +682,801 @@ section[data-testid="stSidebar"] div[data-testid="stPopover"] button {
 }
 
 
+
+/* ============================================================
+   ACCESSIBILITY + ADVANCED UI
+   ============================================================ */
+
+section[data-testid="stSidebar"] .stCaption,
+section[data-testid="stSidebar"] small,
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {
+    color: #c9d8e8 !important;
+    opacity: 1 !important;
+}
+
+section[data-testid="stSidebar"] .stMarkdown,
+section[data-testid="stSidebar"] .stMarkdown p,
+section[data-testid="stSidebar"] [data-testid="stText"],
+section[data-testid="stSidebar"] label {
+    color: #f4f8fc !important;
+}
+
+section[data-testid="stSidebar"] input,
+section[data-testid="stSidebar"] textarea {
+    color: #10243b !important;
+    background: #f7fbff !important;
+}
+
+.small-muted,
+.metric-label,
+.shipment-text,
+.received-text,
+.activity-meta,
+.status-label,
+.ai-summary-label {
+    color: #526b86 !important;
+}
+
+.sidebar-subtle {
+    color: #c9d8e8 !important;
+}
+
+.command-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin: 0 0 18px 0;
+}
+
+.command-chip {
+    background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);
+    border: 1px solid #d5e2ef;
+    border-radius: 12px;
+    padding: 11px 13px;
+    box-shadow: 0 4px 16px rgba(23,54,90,.05);
+}
+
+.command-chip-label {
+    color: #526b86;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: .7px;
+    text-transform: uppercase;
+}
+
+.command-chip-value {
+    color: #102b48;
+    font-size: 17px;
+    font-weight: 800;
+    margin-top: 2px;
+}
+
+.health-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #16a878;
+    box-shadow: 0 0 0 4px rgba(22,168,120,.12);
+    margin-right: 6px;
+}
+
+.confidence-high {
+    color: #087f5b !important;
+    background: #e7f8f1;
+    border-color: #bdebdc;
+}
+.confidence-medium {
+    color: #9a6700 !important;
+    background: #fff7db;
+    border-color: #f4df9c;
+}
+.confidence-low {
+    color: #a33a3a !important;
+    background: #fff0f0;
+    border-color: #f2c7c7;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stButton"] > button {
+    color: #10243b !important;
+    background: #f7fbff !important;
+    border-color: #d7e4f0 !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stButton"] > button:hover {
+    color: #ffffff !important;
+    border-color: #4f8fbd !important;
+    background: #174d79 !important;
+}
+
+div[data-testid="stButton"] > button:hover {
+    border-color: #9db8d2;
+    box-shadow: 0 4px 12px rgba(32,73,116,.08);
+}
+
+div[data-testid="stMetric"] {
+    background: #f8fafc;
+    border: 1px solid #dce7f1;
+    border-radius: 12px;
+    padding: 10px 12px;
+}
+
+@media (max-width: 900px) {
+    .command-strip { grid-template-columns: repeat(2, 1fr); }
+}
+
+
+/* ============================================================
+   COMPETITION-READY UI LAYER
+   ============================================================ */
+.sg-section-label {
+    color:#355b7d !important;
+    font-size:11px;
+    font-weight:800;
+    letter-spacing:.85px;
+    text-transform:uppercase;
+    margin:2px 0 9px;
+}
+.sg-insight-grid {
+    display:grid;
+    grid-template-columns:1.25fr 1fr 1fr;
+    gap:12px;
+    margin:0 0 20px;
+}
+.sg-insight-card {
+    position:relative;
+    overflow:hidden;
+    min-height:118px;
+    padding:15px 16px;
+    border:1px solid #d8e5f0;
+    border-radius:14px;
+    background:linear-gradient(145deg,#ffffff 0%,#f6faff 100%);
+    box-shadow:0 6px 22px rgba(24,59,92,.055);
+}
+.sg-insight-card:after {
+    content:""; position:absolute; width:90px; height:90px;
+    right:-30px; bottom:-38px; border-radius:50%;
+    background:rgba(38,116,176,.055);
+}
+.sg-insight-title { color:#526b86; font-size:10px; font-weight:800; letter-spacing:.55px; text-transform:uppercase; }
+.sg-insight-value { color:#102943; font-size:26px; line-height:1.05; font-weight:800; margin-top:6px; }
+.sg-insight-copy { color:#526b86; font-size:11px; line-height:1.45; margin-top:5px; max-width:92%; }
+.sg-progress { height:6px; margin-top:11px; background:#e7eef5; border-radius:999px; overflow:hidden; }
+.sg-progress > span { display:block; height:100%; border-radius:999px; background:linear-gradient(90deg,#1c6aa5,#4a9bd0); }
+.sg-ai-callout {
+    margin:0 0 18px; padding:12px 14px; border:1px solid #d5e5f2;
+    border-radius:12px; background:linear-gradient(90deg,#f2f8fd,#ffffff);
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+}
+.sg-ai-callout-title { color:#173a5b; font-size:12px; font-weight:800; }
+.sg-ai-callout-copy { color:#526b86; font-size:10px; margin-top:2px; }
+.sg-ai-badge {
+    white-space:nowrap; padding:6px 9px; border-radius:999px;
+    background:#eaf5ff; color:#1769aa; border:1px solid #cfe3f4;
+    font-size:9px; font-weight:800;
+}
+.sg-kpi-icon {
+    width:28px; height:28px; border-radius:8px; display:flex;
+    align-items:center; justify-content:center; background:#edf5fb;
+    color:#1769aa; font-size:12px; font-weight:800; margin-bottom:7px;
+}
+@media (max-width: 900px) {
+    .sg-insight-grid { grid-template-columns:1fr; }
+    .sg-ai-callout { align-items:flex-start; flex-direction:column; }
+}
+
+/* ============================================================
+   ADVANCED PRODUCT UI OVERRIDES
+   ============================================================ */
+:root {
+    --sg-navy: #0b1f35;
+    --sg-blue: #1769aa;
+    --sg-blue-2: #2b7bbb;
+    --sg-ink: #14263d;
+    --sg-muted: #526b86;
+    --sg-border: #d8e4ef;
+    --sg-surface: #ffffff;
+    --sg-surface-2: #f5f8fc;
+    --sg-success: #087f5b;
+    --sg-warning: #9a6700;
+    --sg-danger: #b42318;
+}
+
+.stApp {
+    background:
+        radial-gradient(circle at 90% -10%, rgba(39,119,190,.08), transparent 28%),
+        linear-gradient(180deg, #f7faff 0%, #f2f6fb 100%);
+}
+
+.block-container {
+    max-width: 1540px !important;
+    padding-left: clamp(1rem, 2.2vw, 2.2rem) !important;
+    padding-right: clamp(1rem, 2.2vw, 2.2rem) !important;
+}
+
+/* Make all normal text comfortably readable. */
+.stMarkdown, .stText, p, li, label, [data-testid="stCaptionContainer"] {
+    color: var(--sg-ink);
+}
+
+[data-testid="stCaptionContainer"] {
+    color: var(--sg-muted) !important;
+    opacity: 1 !important;
+}
+
+/* Inputs */
+div[data-baseweb="input"] > div,
+div[data-baseweb="select"] > div,
+textarea,
+input {
+    border-radius: 10px !important;
+    border-color: #cbd9e7 !important;
+}
+
+div[data-baseweb="input"] > div:focus-within,
+div[data-baseweb="select"] > div:focus-within,
+textarea:focus,
+input:focus {
+    border-color: #4c91c7 !important;
+    box-shadow: 0 0 0 3px rgba(76,145,199,.13) !important;
+}
+
+/* Buttons */
+div[data-testid="stButton"] > button,
+[data-testid="baseButton-secondary"],
+[data-testid="baseButton-primary"] {
+    min-height: 38px;
+    border-radius: 10px !important;
+    font-weight: 650 !important;
+    letter-spacing: -.05px;
+    transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+}
+
+div[data-testid="stButton"] > button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 7px 18px rgba(31,73,112,.11);
+}
+
+/* Modern top utility bar */
+.sg-topbar {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:18px;
+    padding:10px 14px;
+    margin:0 0 18px;
+    background:rgba(255,255,255,.92);
+    border:1px solid #dbe6f0;
+    border-radius:14px;
+    box-shadow:0 5px 22px rgba(31,65,98,.055);
+    backdrop-filter:blur(10px);
+}
+.sg-topbar-left { display:flex; align-items:center; gap:10px; min-width:0; }
+.sg-topbar-mark {
+    width:32px; height:32px; border-radius:9px;
+    display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:11px; font-weight:800;
+    background:linear-gradient(135deg,#124d7f,#2b7bbb);
+    box-shadow:0 5px 14px rgba(28,93,145,.18);
+}
+.sg-topbar-title { font-size:13px; font-weight:800; color:#102943; }
+.sg-topbar-path { font-size:10px; color:#667e96; margin-top:1px; }
+.sg-topbar-right { display:flex; align-items:center; gap:8px; }
+.sg-live-pill {
+    display:flex; align-items:center; gap:7px;
+    padding:7px 10px; border-radius:999px;
+    background:#eef9f5; border:1px solid #ccecdf;
+    color:#087f5b; font-size:10px; font-weight:750;
+}
+.sg-live-dot { width:7px; height:7px; border-radius:50%; background:#12a66b; box-shadow:0 0 0 3px rgba(18,166,107,.12); }
+.sg-shortcut {
+    padding:7px 10px; border-radius:8px;
+    background:#f5f8fc; border:1px solid #dbe5ef;
+    color:#526b86; font-size:10px; font-weight:650;
+}
+
+/* Hero / page header */
+.sg-hero {
+    position:relative;
+    overflow:hidden;
+    padding:22px 24px;
+    margin-bottom:18px;
+    border:1px solid #d9e5ef;
+    border-radius:16px;
+    background:linear-gradient(135deg,#ffffff 0%,#f4f9fe 72%,#eef6fd 100%);
+    box-shadow:0 7px 26px rgba(28,65,100,.055);
+}
+.sg-hero:after {
+    content:""; position:absolute; width:180px; height:180px; right:-70px; top:-95px;
+    border-radius:50%; background:rgba(44,124,187,.08);
+}
+.sg-eyebrow { color:#3675a3; font-size:10px; font-weight:800; letter-spacing:1px; text-transform:uppercase; }
+.sg-hero-title { color:#102943; font-size:28px; line-height:1.15; font-weight:800; margin-top:4px; }
+.sg-hero-copy { color:#526b86; font-size:13px; margin-top:7px; max-width:760px; }
+
+/* Cards feel like a real operations product */
+.metric-card, .priority-wrapper, .panel, .action-box, .doc-card, .ai-summary {
+    box-shadow:0 6px 24px rgba(24,59,92,.055) !important;
+}
+
+.metric-card:hover, .doc-card:hover {
+    border-color:#bfd3e5;
+    box-shadow:0 9px 26px rgba(24,59,92,.085) !important;
+}
+
+/* Better table rows */
+.priority-row, .table-box { background:#fff; }
+.priority-row:hover { background:#f8fbfe; }
+.table-head { color:#536c85 !important; background:#f3f7fb !important; }
+.subject-text { color:#183653 !important; font-weight:650 !important; }
+.shipment-text, .received-text { color:#526b86 !important; }
+
+/* Streamlit metrics */
+div[data-testid="stMetric"] label,
+div[data-testid="stMetric"] [data-testid="stMetricLabel"] {
+    color:#526b86 !important;
+}
+div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+    color:#102943 !important;
+}
+
+/* Expander / tabs */
+details[data-testid="stExpander"] {
+    border:1px solid #dbe5ef !important;
+    border-radius:12px !important;
+    background:#fff !important;
+}
+button[data-baseweb="tab"] { color:#526b86 !important; font-weight:650 !important; }
+button[data-baseweb="tab"][aria-selected="true"] { color:#1769aa !important; }
+
+/* Sidebar: high contrast and polished */
+section[data-testid="stSidebar"] {
+    background:linear-gradient(180deg,#0c2945 0%,#081d33 100%) !important;
+}
+section[data-testid="stSidebar"] .shipguard-subtitle,
+section[data-testid="stSidebar"] .sidebar-user-role,
+section[data-testid="stSidebar"] .sidebar-subtle { color:#c5d7e8 !important; }
+section[data-testid="stSidebar"] .sidebar-section { color:#f2f7fb !important; opacity:1 !important; }
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover { background:rgba(255,255,255,.10) !important; }
+section[data-testid="stSidebar"] div[role="radiogroup"] > label[data-checked="true"] {
+    background:linear-gradient(90deg,#1b68a5,#287ab9) !important;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.10),0 7px 18px rgba(0,0,0,.18) !important;
+}
+
+/* Accessibility */
+*:focus-visible { outline:3px solid rgba(46,126,190,.28) !important; outline-offset:2px; }
+@media (max-width: 900px) {
+    .sg-topbar-right .sg-shortcut { display:none; }
+    .sg-hero-title { font-size:23px; }
+}
+
+
+/* ============================================================
+   DOCUMENT REVIEW READABILITY — HIGH CONTRAST
+   Never use white text on light review surfaces.
+   ============================================================ */
+.case-banner,
+.case-banner h1,
+.case-banner h2,
+.case-banner h3,
+.case-banner p,
+.case-banner span,
+.case-banner div {
+    color: #102943;
+}
+.case-banner h2 {
+    color: #0f2942 !important;
+    font-size: 24px !important;
+    line-height: 1.28 !important;
+    font-weight: 800 !important;
+}
+.case-banner > div:first-child {
+    color: #42627e !important;
+}
+.case-banner .small-muted,
+.case-banner [style*="color:#70839a"] {
+    color: #526b86 !important;
+}
+
+/* Light review cards always use dark readable text. */
+.panel,
+.panel *:not(.badge):not(.type-badge),
+.info-box,
+.info-box *:not(.badge):not(.type-badge),
+.action-box,
+.action-box *:not(.badge):not(.type-badge),
+.ai-summary,
+.ai-summary *:not(.badge):not(.type-badge),
+.discrepancy,
+.discrepancy *:not(.badge):not(.type-badge) {
+    -webkit-text-fill-color: currentColor;
+}
+.panel,
+.panel p,
+.panel li,
+.panel span,
+.panel div,
+.panel label,
+.info-box,
+.info-box p,
+.info-box span,
+.info-box div,
+.action-box,
+.action-box p,
+.action-box span,
+.action-box div,
+.ai-summary,
+.ai-summary p,
+.ai-summary span,
+.ai-summary div {
+    color: #183653 !important;
+}
+.panel-title {
+    color: #102943 !important;
+    font-weight: 800 !important;
+}
+
+/* Discrepancy warning: dark ink on pale warning background. */
+.discrepancy {
+    background: #fff8f7 !important;
+    border: 1px solid #e7a29a !important;
+    color: #172b40 !important;
+}
+.discrepancy b,
+.discrepancy strong {
+    color: #9f2d23 !important;
+    font-weight: 800 !important;
+}
+.discrepancy .small-muted,
+.discrepancy span.small-muted {
+    color: #38536d !important;
+    font-size: 12px !important;
+    line-height: 1.55 !important;
+}
+.discrepancy span[style] {
+    color: #203b54 !important;
+    line-height: 1.55 !important;
+}
+
+/* Suggested actions: readable text and stronger visual affordance. */
+.action-box {
+    background: #f5f9fd !important;
+    border: 1px solid #d3e1ee !important;
+    color: #173853 !important;
+    font-size: 13px !important;
+    line-height: 1.55 !important;
+    font-weight: 550 !important;
+}
+.action-box:hover {
+    background: #edf5fb !important;
+    border-color: #b9d2e6 !important;
+}
+
+/* AI explanation and comparison values. */
+.ai-summary-label {
+    color: #49657f !important;
+    opacity: 1 !important;
+}
+.ai-summary-value {
+    color: #16334e !important;
+    font-weight: 700 !important;
+}
+
+/* Comparison tabs and their content. */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 4px;
+    border-bottom: 1px solid #d8e4ef;
+}
+.stTabs [data-baseweb="tab"] {
+    color: #45617b !important;
+    font-weight: 700 !important;
+    opacity: 1 !important;
+}
+.stTabs [data-baseweb="tab"] p,
+.stTabs [data-baseweb="tab"] span {
+    color: #45617b !important;
+}
+.stTabs [aria-selected="true"],
+.stTabs [aria-selected="true"] p,
+.stTabs [aria-selected="true"] span {
+    color: #145f99 !important;
+}
+
+/* Streamlit captions are often too faint on document-review screens. */
+.stTabs [data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] {
+    color: #4d6780 !important;
+    opacity: 1 !important;
+    font-weight: 500 !important;
+}
+
+/* Review-page native text inputs/text areas. */
+.stTextInput label,
+.stTextArea label,
+.stSelectbox label,
+.stMultiSelect label {
+    color: #243f59 !important;
+    font-weight: 700 !important;
+}
+.stTextInput input,
+.stTextArea textarea,
+.stSelectbox [data-baseweb="select"] * {
+    color: #102943 !important;
+    -webkit-text-fill-color: #102943 !important;
+}
+
+/* Record list/table: every field remains readable on white rows. */
+.table-box,
+.table-box * {
+    color: #183653;
+}
+.table-head,
+.table-head * {
+    color: #3f5d77 !important;
+}
+.priority-row .subject-text,
+.priority-row .shipment-text,
+.priority-row .received-text {
+    color: #183653 !important;
+    opacity: 1 !important;
+}
+.priority-row .shipment-text,
+.priority-row .received-text {
+    color: #506b85 !important;
+}
+
+/* Native Streamlit success/info messages: readable dark text. */
+div[data-testid="stAlert"] p,
+div[data-testid="stAlert"] span {
+    color: #183653 !important;
+    opacity: 1 !important;
+}
+
+/* Keep intentional coloured badges readable. */
+.badge,
+.type-badge,
+.badge *,
+.type-badge * {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
+
+/* Accessibility and interaction polish */
+.stApp { color: #0f172a; }
+[data-testid="stSidebar"] { background: #0f172a !important; border-right: 1px solid #334155 !important; }
+[data-testid="stSidebar"] * { color: #e2e8f0 !important; }
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] span,
+[data-testid="stSidebar"] label { color: #e2e8f0 !important; opacity: 1 !important; }
+[data-testid="stSidebar"] button { color: #e2e8f0 !important; background: transparent !important; border-color: transparent !important; }
+[data-testid="stSidebar"] button:hover { background: #1e293b !important; color: #ffffff !important; }
+button[kind="secondary"], button[kind="primary"] { transition: background .15s ease, border-color .15s ease, transform .15s ease; }
+button[kind="secondary"]:hover { background: #e0e7ff !important; color: #1e3a8a !important; border-color: #93c5fd !important; }
+button[kind="primary"]:hover { background: #1d4ed8 !important; color: #ffffff !important; border-color: #2563eb !important; }
+[data-testid="stButton"] button { min-height: 42px; font-weight: 650; }
+[data-testid="stMetric"] { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 14px; }
+[data-testid="stTextInput"] input, [data-testid="stTextArea"] textarea { color: #0f172a !important; background: #ffffff !important; }
+[data-baseweb="select"] * { color: #0f172a !important; }
+/* FINAL INTERACTION + TOP-CHROME CONTRAST PASS */
+/* View/action buttons start quiet and become blue only on hover/focus. */
+div[data-testid="stButton"] > button {
+    background: #f8fbfe !important;
+    color: #173653 !important;
+    -webkit-text-fill-color: #173653 !important;
+    border: 1px solid #d5e3ef !important;
+    box-shadow: none !important;
+}
+div[data-testid="stButton"] > button:hover,
+div[data-testid="stButton"] > button:focus-visible,
+div[data-testid="stButton"] > button:active {
+    background: #2f7fba !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    border-color: #2f7fba !important;
+    box-shadow: 0 6px 16px rgba(47,127,186,.20) !important;
+}
+/* Sidebar controls use the same readable dark-on-light idle state. */
+section[data-testid="stSidebar"] div[data-testid="stButton"] > button {
+    background: rgba(255,255,255,.08) !important;
+    color: #f4f8fc !important;
+    -webkit-text-fill-color: #f4f8fc !important;
+    border-color: rgba(255,255,255,.16) !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stButton"] > button:hover,
+section[data-testid="stSidebar"] div[data-testid="stButton"] > button:focus-visible {
+    background: #2f7fba !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    border-color: #5ba1d2 !important;
+}
+/* Keep the Streamlit sidebar arrow visible, but remove the dark chrome. */
+header[data-testid="stHeader"] {
+    background: #f7fbff !important;
+    height: 52px !important;
+    border-bottom: 1px solid #dbe7f1 !important;
+}
+button[data-testid="stSidebarCollapseButton"] {
+    background: #eaf4fc !important;
+    color: #174b70 !important;
+    border: 1px solid #c7deee !important;
+    border-radius: 9px !important;
+    box-shadow: 0 2px 8px rgba(28,74,110,.08) !important;
+}
+button[data-testid="stSidebarCollapseButton"] svg {
+    color: #174b70 !important;
+    fill: #174b70 !important;
+    stroke: #174b70 !important;
+}
+button[data-testid="stSidebarCollapseButton"]:hover {
+    background: #dceefb !important;
+    color: #123f5e !important;
+}
+/* Give the application enough breathing room below Streamlit's header. */
+.block-container { padding-top: 2.25rem !important; }
+/* Top utility bar remains fully visible on every page. */
+.sg-topbar { min-height: 54px; }
+.sg-topbar-title, .sg-topbar-path, .sg-shortcut, .sg-live-pill { opacity: 1 !important; }
+.sg-topbar-title { color: #102943 !important; }
+.sg-topbar-path, .sg-shortcut { color: #526b86 !important; }
+.sg-live-pill { color: #087f5b !important; }
+/* Account popover: obvious text on a light menu surface. */
+section[data-testid="stSidebar"] div[data-testid="stPopover"] {
+    color: #173653 !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stPopover"] button {
+    background: #ffffff !important;
+    color: #173653 !important;
+    -webkit-text-fill-color: #173653 !important;
+    border-color: #d6e3ee !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stPopover"] button:hover {
+    background: #eaf4fc !important;
+    color: #155b8d !important;
+    -webkit-text-fill-color: #155b8d !important;
+}
+/* Settings navigation button. */
+button[key="settings_back"] {
+    background: #f8fbfe !important;
+    color: #173653 !important;
+    -webkit-text-fill-color: #173653 !important;
+}
+button[key="settings_back"]:hover {
+    background: #2f7fba !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
+
+/* Final contrast pass */
+.stCaption, .stCaption p, [data-testid="stCaptionContainer"] p {
+    color:#526b86 !important;
+    opacity:1 !important;
+}
+div[data-testid="stTextInput"] label,
+div[data-testid="stSelectbox"] label,
+div[data-testid="stTextArea"] label,
+div[data-testid="stToggle"] label {
+    color:#294663 !important;
+    font-weight:650 !important;
+}
+
 </style>
 """,
     unsafe_allow_html=True,
 )
+
+if st.session_state.get("app_theme", "light") == "dark":
+    st.markdown(
+        """
+<style>
+:root {
+    color-scheme: dark;
+}
+.stApp {
+    background: #0b1220 !important;
+    color: #e8eef6 !important;
+}
+[data-testid="stAppViewContainer"] {
+    background: #0b1220 !important;
+}
+.block-container {
+    color: #e8eef6 !important;
+}
+.sg-topbar {
+    background: #111c2d !important;
+    border-color: #263b54 !important;
+}
+.sg-topbar-title, .sg-topbar-path, .sg-shortcut {
+    color: #e8eef6 !important;
+}
+.sg-topbar-path, .sg-shortcut {
+    color: #a8bbcf !important;
+}
+.sg-live-pill {
+    color: #63d5ae !important;
+    background: #102d28 !important;
+    border-color: #245747 !important;
+}
+.panel, .metric-card, .status-card, .action-box, .table-box,
+.document-summary, .review-panel, .sidebar-user-box {
+    background: #111c2d !important;
+    border-color: #2b4058 !important;
+    color: #e8eef6 !important;
+}
+.metric-label, .status-label, .table-head, .sidebar-subtle,
+.sg-topbar-path {
+    color: #a8bbcf !important;
+}
+.metric-value, .status-value, .table-box *,
+.document-summary *, .review-panel *, .action-box * {
+    color: #e8eef6 !important;
+}
+[data-testid="stMetric"] {
+    background: #111c2d !important;
+    border-color: #2b4058 !important;
+}
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea,
+[data-baseweb="select"] > div {
+    background: #172438 !important;
+    color: #f2f6fb !important;
+    -webkit-text-fill-color: #f2f6fb !important;
+    border-color: #38506a !important;
+}
+.stTabs [data-baseweb="tab-list"] {
+    border-color: #2b4058 !important;
+}
+.stTabs [data-baseweb="tab"],
+.stTabs [data-baseweb="tab"] p,
+.stTabs [data-baseweb="tab"] span {
+    color: #b9c9da !important;
+}
+.stTabs [aria-selected="true"],
+.stTabs [aria-selected="true"] p,
+.stTabs [aria-selected="true"] span {
+    color: #73b8ef !important;
+}
+[data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] p {
+    color: #a8bbcf !important;
+}
+[data-testid="stButton"] > button {
+    background: #172438 !important;
+    color: #e8eef6 !important;
+    -webkit-text-fill-color: #e8eef6 !important;
+    border-color: #38506a !important;
+}
+[data-testid="stButton"] > button:hover,
+[data-testid="stButton"] > button:focus-visible {
+    background: #245b86 !important;
+    color: #ffffff !important;
+    border-color: #3d83b9 !important;
+}
+header[data-testid="stHeader"] {
+    background: #0f1a2a !important;
+    border-color: #263b54 !important;
+}
+button[data-testid="stSidebarCollapseButton"] {
+    background: #dceefb !important;
+    color: #123f5e !important;
+    border-color: #8eb8d7 !important;
+}
+button[data-testid="stSidebarCollapseButton"] svg {
+    color: #123f5e !important;
+    fill: #123f5e !important;
+    stroke: #123f5e !important;
+}
+div[data-testid="stAlert"] {
+    background: #172438 !important;
+    border-color: #38506a !important;
+}
+div[data-testid="stAlert"] p,
+div[data-testid="stAlert"] span {
+    color: #e8eef6 !important;
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ============================================================
@@ -708,6 +1493,7 @@ DEFAULT_CASES = [
         "Received": "10:24 AM",
         "Shipment Type": "International",
         "Status": "Under Review",
+        "Confidence": "HIGH",
     },
     {
         "ID": "SI-001",
@@ -718,6 +1504,7 @@ DEFAULT_CASES = [
         "Received": "09:51 AM",
         "Shipment Type": "International",
         "Status": "Under Review",
+        "Confidence": "HIGH",
     },
     {
         "ID": "INV-001",
@@ -728,6 +1515,7 @@ DEFAULT_CASES = [
         "Received": "09:32 AM",
         "Shipment Type": "Domestic",
         "Status": "Done",
+        "Confidence": "HIGH",
     },
     {
         "ID": "OPS-001",
@@ -738,6 +1526,7 @@ DEFAULT_CASES = [
         "Received": "08:45 AM",
         "Shipment Type": "International",
         "Status": "Done",
+        "Confidence": "HIGH",
     },
     {
         "ID": "DOC-002",
@@ -748,6 +1537,7 @@ DEFAULT_CASES = [
         "Received": "08:15 AM",
         "Shipment Type": "Domestic",
         "Status": "Under Review",
+        "Confidence": "HIGH",
     },
     {
         "ID": "SPAM-001",
@@ -758,6 +1548,7 @@ DEFAULT_CASES = [
         "Received": "07:50 AM",
         "Shipment Type": "International",
         "Status": "Done",
+        "Confidence": "HIGH",
     },
 ]
 
@@ -814,10 +1605,43 @@ DEFAULT_COMPARISON = [
 ]
 
 
-def load_backend_records():
-    if not BACKEND_AVAILABLE:
-        return pd.DataFrame(DEFAULT_CASES)
+REQUIRED_RECORD_COLUMNS = [
+    "ID", "Type", "Subject", "From", "Shipment", "Priority",
+    "Received", "Shipment Type", "Status", "Confidence"
+]
 
+
+def ensure_record_schema(frame):
+    """Guarantee a stable record schema for every data source."""
+    if frame is None or not isinstance(frame, pd.DataFrame):
+        frame = pd.DataFrame()
+
+    frame = frame.copy()
+
+    for column in REQUIRED_RECORD_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = ""
+
+    defaults = {
+        "ID": "UNKNOWN",
+        "Type": "Operational Update",
+        "Subject": "Untitled record",
+        "From": "",
+        "Shipment": "-",
+        "Priority": "Normal",
+        "Received": "-",
+        "Shipment Type": "International",
+        "Status": "Under Review",
+        "Confidence": "LOW",
+    }
+
+    for column, default in defaults.items():
+        frame[column] = frame[column].fillna(default).replace("", default)
+
+    return frame[REQUIRED_RECORD_COLUMNS + [c for c in frame.columns if c not in REQUIRED_RECORD_COLUMNS]]
+
+
+def load_backend_records():
     category_map = {
         "document_comparison": "Document Check",
         "new_si_request": "SI Request",
@@ -826,13 +1650,32 @@ def load_backend_records():
         "spam": "Spam",
     }
 
-    inbox = load_inbox()
     rows = []
 
-    for email in inbox:
-        classification = classify_email(email)
+    # Keep the frontend resilient when the local/backend inbox is unavailable.
+    # The demo must never break because an input file, classifier, or connector
+    # temporarily fails.
+    try:
+        inbox = load_inbox()
+        emails = list(inbox) if inbox is not None else []
+    except Exception:
+        emails = []
 
-        category = classification["category"]
+    # Fall back to the built-in demo records when the local inbox is empty
+    # or unavailable. This keeps the dashboard usable even without source
+    # email files or external backend data.
+    if not emails:
+        return ensure_record_schema(pd.DataFrame(DEFAULT_CASES))
+
+    for email in emails:
+        try:
+            classification = classify_email(email)
+            category = classification.get("category", "general")
+        except Exception:
+            # A malformed email should not prevent the rest of the workspace
+            # from loading.
+            classification = {"category": "general", "confidence": "LOW"}
+            category = "general"
 
         rows.append({
             "ID": email["email_id"],
@@ -848,121 +1691,14 @@ def load_backend_records():
                 if category == "document_comparison"
                 else "Done"
             ),
+            "Confidence": classification.get("confidence", "LOW"),
         })
 
-    return pd.DataFrame(rows)
+    return ensure_record_schema(pd.DataFrame(rows))
 
 
 def load_backend_comparison():
     return pd.DataFrame(DEFAULT_COMPARISON)
-
-
-@st.cache_data(show_spinner=False)
-def process_backend_email(email_id):
-    if not BACKEND_AVAILABLE or process_email is None:
-        return {
-            "status": "backend_unavailable",
-            "reason": "Backend processing is not available.",
-        }
-
-    try:
-        inbox = load_inbox()
-
-        email = next(
-            (
-                item
-                for item in inbox
-                if str(item.get("email_id")) == str(email_id)
-            ),
-            None,
-        )
-
-        if email is None:
-            return {
-                "status": "email_not_found",
-                "reason": f"Email {email_id} was not found.",
-            }
-
-        return process_email(email)
-
-    except Exception as exc:
-        return {
-            "status": "failed",
-            "reason": str(exc),
-            "errors": [str(exc)],
-        }
-
-
-def verification_to_comparison(email_id, pipeline_result):
-    verification = pipeline_result.get("verification") or {}
-    field_results = verification.get("field_results") or {}
-
-    if not field_results:
-        return pd.DataFrame(
-            columns=[
-                "Shipment",
-                "Field",
-                "Shipping Instruction (SI)",
-                "Draft Bill of Lading (BL)",
-                "Status",
-                "Verification Reason",
-                "SI Confidence",
-                "BL Confidence",
-                "SI Source",
-                "BL Source",
-                "SI Normalized",
-                "BL Normalized",
-            ]
-        )
-
-    field_labels = {
-        "shipper": "Shipper",
-        "consignee": "Consignee",
-        "notify_party": "Notify Party",
-        "port_of_loading": "Port of Loading",
-        "port_of_discharge": "Port of Discharge",
-        "container_count": "Container Count",
-        "gross_weight_kg": "Gross Weight (KG)",
-    }
-
-    status_map = {
-        "MATCH": "Match",
-        "MISMATCH": "Discrepancy",
-        "REVIEW": "Needs Review",
-    }
-
-    rows = []
-
-    for field_name, field_result in field_results.items():
-        si = field_result.get("si") or {}
-        bl = field_result.get("bl") or {}
-
-        si_raw = si.get("raw")
-        bl_raw = bl.get("raw")
-
-        rows.append({
-            "Shipment": email_id,
-            "Field": field_labels.get(field_name, field_name),
-            "Shipping Instruction (SI)": (
-                "Missing" if si_raw is None else str(si_raw)
-            ),
-            "Draft Bill of Lading (BL)": (
-                "Missing" if bl_raw is None else str(bl_raw)
-            ),
-            "Status": status_map.get(
-                field_result.get("status"),
-                "Needs Review",
-            ),
-            "Verification Reason": field_result.get("reason"),
-            "SI Confidence": si.get("confidence"),
-            "BL Confidence": bl.get("confidence"),
-            "SI Source": si.get("source"),
-            "BL Source": bl.get("source"),
-            "SI Normalized": si.get("normalized"),
-            "BL Normalized": bl.get("normalized"),
-        })
-
-    return pd.DataFrame(rows)
 
 
 # ============================================================
@@ -971,6 +1707,8 @@ def verification_to_comparison(email_id, pipeline_result):
 
 if "df" not in st.session_state:
     st.session_state["df"] = load_backend_records()
+
+st.session_state["df"] = ensure_record_schema(st.session_state["df"])
 
 if "comparison_df" not in st.session_state:
     st.session_state["comparison_df"] = load_backend_comparison()
@@ -1013,20 +1751,13 @@ if "_pending_nav" not in st.session_state:
 
 
 # ------------------------------------------------------------
-# BUGFIX: main_nav / insights_nav / system_nav 这三个键是绑定
-# 在侧边栏 st.radio 组件上的。Streamlit 规定：一个组件被创建
-# 之后，本次运行内不能再直接对同名的 session_state 赋值，否则
-# 会抛出 StreamlitAPIException（页面上就是一片报错文字，也就
-# 是你看到的"乱码"）。但原代码里有好几处按钮（例如"返回
-# Home"、Settings 里的"Back to Home"）恰好是在侧边栏渲染完
-# 之后才执行的，直接写 st.session_state["main_nav"] = "Home"
-# 就会踩中这个限制。
-#
-# 解决办法：这些按钮不再直接改 main_nav/insights_nav/system_nav，
-# 而是把想要的值放进 _pending_nav 里排队，然后 st.rerun()。下一次
-# 运行一开始（此处，早于侧边栏 radio 被创建之前）再把排队的值
-# 应用到真正的 session_state 上，这样就不会违反前面的限制了。
+# NAVIGATION STATE FIX
 # ------------------------------------------------------------
+# Streamlit radio widgets own their session_state keys after creation.
+# Writing to those keys later in the same run can raise StreamlitAPIException.
+# Buttons therefore place navigation changes into _pending_nav and trigger a
+# rerun. The queued values are applied before the radio widgets are created.
+
 if st.session_state["_pending_nav"]:
 
     _pending = st.session_state.pop("_pending_nav")
@@ -1052,12 +1783,10 @@ def go_to(
     case_view=None,
     selected_record_id="__unset__",
 ):
-    """排队一次导航跳转，并立即 rerun。
+    """Queue a navigation change and rerun the application.
 
-    main_nav / insights_nav / system_nav 是侧边栏 radio 组件的
-    session_state 键，只能在对应组件被创建之前赋值。这里统一走
-    _pending_nav 队列，在下一次脚本运行最开始（组件创建之前）
-    再真正写入，从而避免 StreamlitAPIException。
+    Radio navigation keys must be updated before their widgets are created.
+    The pending-navigation queue keeps button-driven navigation safe.
     """
 
     pending = {}
@@ -1127,16 +1856,7 @@ def priority_badge(text):
 
 
 def status_badge(text):
-    classes = {
-        "Done": "badge-green",
-        "Verified": "badge-green",
-        "Discrepancy": "badge-red",
-        "Needs Review": "badge-orange",
-        "Processing Error": "badge-red",
-        "Under Review": "badge-orange",
-    }
-
-    cls = classes.get(text, "badge-blue")
+    cls = "badge-green" if text == "Done" else "badge-orange"
 
     return f"""
     <span class="badge {cls}">
@@ -1145,37 +1865,15 @@ def status_badge(text):
     """
 
 
-def get_record_display_status(record):
-    current_status = record.get("Status")
-
-    if current_status == "Done":
-        return "Done"
-
-    if record.get("Type") != "Document Check":
-        return current_status or "Done"
-
-    if (
-        BACKEND_AVAILABLE
-        and process_email is not None
-        and record.get("ID") is not None
-    ):
-        pipeline_result = process_backend_email(
-            record.get("ID")
-        )
-
-        status_map = {
-            "verified": "Verified",
-            "mismatch": "Discrepancy",
-            "human_review": "Needs Review",
-            "failed": "Processing Error",
-        }
-
-        return status_map.get(
-            pipeline_result.get("status"),
-            current_status or "Under Review",
-        )
-
-    return current_status or "Under Review"
+def confidence_badge(value):
+    """Render the classifier confidence as a compact accessible badge."""
+    confidence = str(value or "LOW").upper()
+    css_class = {
+        "HIGH": "confidence-high",
+        "MEDIUM": "confidence-medium",
+        "LOW": "confidence-low",
+    }.get(confidence, "confidence-low")
+    return f'<span class="badge {css_class}">{safe_text(confidence)} confidence</span>'
 
 
 def get_record_by_id(record_id):
@@ -1286,6 +1984,8 @@ def search_dataframe(input_df, query):
             "Priority",
             "Shipment Type",
             "Status",
+            "From",
+            "Confidence",
         ]
         if column in input_df.columns
     ]
@@ -1398,17 +2098,8 @@ def get_review_note(record_id):
 
 def get_comparison_for_record(record):
 
-    record_id = record.get("ID")
-
-    if BACKEND_AVAILABLE and process_email is not None and record_id is not None:
-        pipeline_result = process_backend_email(record_id)
-
-        return verification_to_comparison(
-            record_id,
-            pipeline_result,
-        )
-
     if comparison_df.empty:
+
         return pd.DataFrame(
             columns=[
                 "Field",
@@ -1420,12 +2111,17 @@ def get_comparison_for_record(record):
     shipment = record.get("Shipment")
 
     if "Shipment" in comparison_df.columns:
-        return comparison_df[
+
+        result = comparison_df[
             comparison_df["Shipment"].astype(str)
             == str(shipment)
         ].copy()
 
-    return comparison_df.copy()
+    else:
+
+        result = comparison_df.copy()
+
+    return result
 
 
 def normalize_comparison_value(value):
@@ -1467,9 +2163,6 @@ def build_comparison_statuses(comp_df):
         return comp_df.copy()
 
     result = comp_df.copy()
-
-    if "Status" in result.columns:
-        return result
 
     result["Status"] = result.apply(
         lambda row: comparison_status(
@@ -1516,88 +2209,6 @@ def format_difference(si_value, bl_value):
     return f"{difference:,.2f}"
 
 
-def humanize_verification_reason(
-    reason,
-    si_value=None,
-    bl_value=None,
-):
-    raw_reason = str(reason or "").strip()
-    reason_text = raw_reason.lower()
-
-    si_missing = str(si_value).strip().lower() in {
-        "",
-        "missing",
-        "none",
-        "nan",
-    }
-
-    bl_missing = str(bl_value).strip().lower() in {
-        "",
-        "missing",
-        "none",
-        "nan",
-    }
-
-    if (
-        "missing_value" in reason_text
-        or "missing value" in reason_text
-        or si_missing
-        or bl_missing
-    ):
-        if si_missing and bl_missing:
-            return (
-                "Both SI and BL values are missing, so this field "
-                "cannot be verified reliably."
-            )
-
-        if si_missing:
-            return (
-                "The SI value is missing, so this field cannot be "
-                "verified reliably."
-            )
-
-        if bl_missing:
-            return (
-                "The BL value is missing, so this field cannot be "
-                "verified reliably."
-            )
-
-    if "low_confidence" in reason_text or "low confidence" in reason_text:
-        return (
-            "The extracted value has low confidence, so human review "
-            "is required before a decision can be made."
-        )
-
-    if (
-        "normalised entity values differ" in reason_text
-        or "normalized entity values differ" in reason_text
-    ):
-        return (
-            "The normalized SI and BL entity values are different."
-        )
-
-    if (
-        "normalised port values differ" in reason_text
-        or "normalized port values differ" in reason_text
-    ):
-        return (
-            "The normalized SI and BL port values are different."
-        )
-
-    if (
-        "normalised numeric values differ" in reason_text
-        or "normalized numeric values differ" in reason_text
-    ):
-        return (
-            "The normalized SI and BL numeric values are different."
-        )
-
-    if raw_reason:
-        return raw_reason
-
-    return "This field could not be verified reliably."
-
-
 def get_discrepancies(comp_df):
 
     if comp_df.empty:
@@ -1609,16 +2220,16 @@ def get_discrepancies(comp_df):
 
 
 def render_page_header(title, caption=None):
-
-    st.markdown(f"# {safe_text(title)}")
-
     st.markdown(
-        '<div class="page-accent"></div>',
+        f"""
+        <div class="sg-hero">
+            <div class="sg-eyebrow">ShipGuard AI · Operations</div>
+            <div class="sg-hero-title">{safe_text(title)}</div>
+            <div class="sg-hero-copy">{safe_text(caption or "Manage shipping operations from one workspace.")}</div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
-
-    if caption:
-        st.caption(caption)
 
 
 def render_filtered_records(
@@ -1939,18 +2550,18 @@ with st.sidebar:
         <div class="sidebar-divider"></div>
 
         <div class="sidebar-section">
-            Inbox Overview
+            Review Status
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    document_checks = int(
-        (df["Type"] == "Document Check").sum()
+    under_review = int(
+        (df["Status"] == "Under Review").sum()
     )
 
-    other_emails = int(
-        (df["Type"] != "Document Check").sum()
+    done = int(
+        (df["Status"] == "Done").sum()
     )
 
     status_c1, status_c2 = st.columns(2)
@@ -1961,11 +2572,11 @@ with st.sidebar:
             f"""
             <div class="status-card">
                 <div class="status-label">
-                    Document checks
+                    Under review
                 </div>
 
                 <div class="status-value">
-                    {document_checks}
+                    {under_review}
                 </div>
             </div>
             """,
@@ -1978,11 +2589,11 @@ with st.sidebar:
             f"""
             <div class="status-card">
                 <div class="status-label">
-                    Other emails
+                    Done
                 </div>
 
                 <div class="status-value">
-                    {other_emails}
+                    {done}
                 </div>
             </div>
             """,
@@ -1993,6 +2604,45 @@ with st.sidebar:
         '<div class="sidebar-divider"></div>',
         unsafe_allow_html=True,
     )
+
+    refresh_col, version_col = st.columns([1.6, 1])
+    with refresh_col:
+        if st.button("Refresh data", use_container_width=True, key="sidebar_refresh"):
+            # Refresh is deliberately fail-safe: if the backend is unavailable,
+            # keep the current dataset and return the user to the working screen.
+            try:
+                refreshed_df = ensure_record_schema(load_backend_records())
+                refreshed_comparison = load_backend_comparison()
+                if refreshed_df is None or refreshed_df.empty:
+                    refreshed_df = ensure_record_schema(pd.DataFrame(DEFAULT_CASES))
+                if refreshed_comparison is None or refreshed_comparison.empty:
+                    refreshed_comparison = load_backend_comparison()
+
+                st.session_state["df"] = refreshed_df
+                st.session_state["comparison_df"] = refreshed_comparison
+                st.session_state["activity_log"] = []
+                st.session_state["refresh_message"] = "Workspace data refreshed."
+            except Exception:
+                # Never expose a traceback to the demo user.
+                # Restore the last known-good dataset and continue normally.
+                st.session_state["df"] = ensure_record_schema(
+                    st.session_state.get("df", pd.DataFrame(DEFAULT_CASES))
+                )
+                st.session_state["comparison_df"] = st.session_state.get(
+                    "comparison_df", load_backend_comparison()
+                )
+                st.session_state["refresh_message"] = (
+                    "Live data is unavailable. Showing the latest available workspace data."
+                )
+            st.rerun()
+    with version_col:
+        st.markdown(
+            f'<div class="sidebar-subtle" style="text-align:right;padding-top:9px;font-size:10px;">v{APP_VERSION}</div>',
+            unsafe_allow_html=True,
+        )
+
+    if st.session_state.pop("refresh_message", None):
+        st.toast("Workspace refreshed safely.", icon="✓")
 
     st.markdown(
         '<div class="sidebar-user-box">',
@@ -2040,6 +2690,16 @@ with st.sidebar:
         st.markdown(f"**{USER_NAME}**")
         st.caption(USER_ROLE)
 
+        account_dark = st.toggle(
+            "Dark mode",
+            value=st.session_state.get("app_theme", "light") == "dark",
+            key="account_dark_mode",
+        )
+        account_theme_value = "dark" if account_dark else "light"
+        if account_theme_value != st.session_state.get("app_theme"):
+            st.session_state["app_theme"] = account_theme_value
+            st.rerun()
+
         if st.button(
             "Settings",
             use_container_width=True,
@@ -2067,6 +2727,28 @@ with st.sidebar:
             st.rerun()
 
 
+def render_global_topbar(page_name):
+    """Render a compact product-style utility bar above page content."""
+    st.markdown(
+        f"""
+        <div class="sg-topbar">
+            <div class="sg-topbar-left">
+                <div class="sg-topbar-mark">SG</div>
+                <div>
+                    <div class="sg-topbar-title">ShipGuard AI</div>
+                    <div class="sg-topbar-path">Operations / {safe_text(page_name)}</div>
+                </div>
+            </div>
+            <div class="sg-topbar-right">
+                <div class="sg-shortcut">AI-assisted review</div>
+                <div class="sg-live-pill"><span class="sg-live-dot"></span>System operational</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # ============================================================
 # EFFECTIVE PAGE
 # ============================================================
@@ -2090,6 +2772,9 @@ elif system_choice is not None:
 else:
 
     page_to_show = main_choice
+
+
+render_global_topbar(page_to_show)
 
 
 # ============================================================
@@ -2123,6 +2808,94 @@ if page_to_show == "Home":
         st.session_state["search_query"] = search
 
     st.write("")
+
+    total_records = len(df)
+    review_count = int((df["Status"] == "Under Review").sum())
+    completed_count = int((df["Status"] == "Done").sum())
+    completion_rate = (
+        (completed_count / total_records * 100)
+        if total_records else 0
+    )
+
+    st.markdown(
+        f"""
+        <div class="command-strip">
+            <div class="command-chip">
+                <div class="command-chip-label">System status</div>
+                <div class="command-chip-value">
+                    <span class="health-dot"></span>{APP_STATUS}
+                </div>
+            </div>
+            <div class="command-chip">
+                <div class="command-chip-label">Records monitored</div>
+                <div class="command-chip-value">{total_records}</div>
+            </div>
+            <div class="command-chip">
+                <div class="command-chip-label">Action queue</div>
+                <div class="command-chip-value">{review_count}</div>
+            </div>
+            <div class="command-chip">
+                <div class="command-chip-label">Completion rate</div>
+                <div class="command-chip-value">{completion_rate:.0f}%</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+    # AI-assisted triage summary: informative rather than button-heavy.
+    ai_open = review_count
+    urgent_count = int((df["Priority"] == "Urgent").sum())
+    high_confidence = int((df["Confidence"].astype(str).str.upper() == "HIGH").sum())
+    confidence_rate = (high_confidence / total_records * 100) if total_records else 0
+    attention_rate = (ai_open / total_records * 100) if total_records else 0
+
+    st.markdown(
+        f"""
+        <div class="sg-ai-callout">
+            <div>
+                <div class="sg-ai-callout-title">AI-assisted operations overview</div>
+                <div class="sg-ai-callout-copy">
+                    ShipGuard has prioritised {urgent_count} urgent record(s) and
+                    {ai_open} case(s) currently requiring human review.
+                </div>
+            </div>
+            <div class="sg-ai-badge">TRIAGE READY · {confidence_rate:.0f}% HIGH CONFIDENCE</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="sg-section-label">Workspace intelligence</div>', unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="sg-insight-grid">
+            <div class="sg-insight-card">
+                <div class="sg-kpi-icon">!</div>
+                <div class="sg-insight-title">Needs attention</div>
+                <div class="sg-insight-value">{ai_open}</div>
+                <div class="sg-insight-copy">Records are waiting for an operations decision.</div>
+                <div class="sg-progress"><span style="width:{min(attention_rate,100):.0f}%"></span></div>
+            </div>
+            <div class="sg-insight-card">
+                <div class="sg-kpi-icon">AI</div>
+                <div class="sg-insight-title">AI confidence</div>
+                <div class="sg-insight-value">{confidence_rate:.0f}%</div>
+                <div class="sg-insight-copy">Classifications currently marked HIGH confidence.</div>
+                <div class="sg-progress"><span style="width:{min(confidence_rate,100):.0f}%"></span></div>
+            </div>
+            <div class="sg-insight-card">
+                <div class="sg-kpi-icon">✓</div>
+                <div class="sg-insight-title">Processing complete</div>
+                <div class="sg-insight-value">{completion_rate:.0f}%</div>
+                <div class="sg-insight-copy">Records completed without remaining review work.</div>
+                <div class="sg-progress"><span style="width:{min(completion_rate,100):.0f}%"></span></div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.markdown(
         '<div class="overview-title">Overview</div>',
@@ -2187,12 +2960,19 @@ if page_to_show == "Home":
                 unsafe_allow_html=True,
             )
 
-    left_space, filter_col, sort_col = st.columns(
-        [3.0, 1.1, 1.1]
+    left_space, priority_col, filter_col, sort_col = st.columns(
+        [2.2, 1.0, 1.0, 1.0]
     )
 
-    with filter_col:
+    with priority_col:
+        priority_filter = st.selectbox(
+            "Priority",
+            ["All Priorities", "Urgent", "Normal", "Low"],
+            label_visibility="collapsed",
+            key="home_priority_filter",
+        )
 
+    with filter_col:
         shipment_filter = st.selectbox(
             "Shipment",
             [
@@ -2205,7 +2985,6 @@ if page_to_show == "Home":
         )
 
     with sort_col:
-
         priority_sort = st.selectbox(
             "Sort",
             [
@@ -2224,6 +3003,11 @@ if page_to_show == "Home":
             "",
         ),
     )
+
+    if priority_filter != "All Priorities":
+        filtered_df = filtered_df[
+            filtered_df["Priority"] == priority_filter
+        ]
 
     if shipment_filter != "All Shipments":
 
@@ -2310,6 +3094,9 @@ if page_to_show == "Home":
                     f"""
                     <div class="subject-text">
                         {safe_text(row["Subject"])}
+                    </div>
+                    <div style="margin-top:5px;">
+                        {confidence_badge(row.get("Confidence", "LOW"))}
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -2873,13 +3660,13 @@ elif page_to_show == "Document Check Case":
             DOCUMENT REVIEW
         </div>
 
-        <h2 style="margin:4px 0 8px;">
+        <h2 style="margin:4px 0 8px; color:#0f2942 !important;">
             {safe_text(record["Subject"])}
         </h2>
 
         {priority_badge(record["Priority"])}
 
-        {status_badge(get_record_display_status(record))}
+        {status_badge(record.get("Status", "Under Review"))}
 
         <span style="
             color:#70839a;
@@ -2976,17 +3763,6 @@ elif page_to_show == "Document Check Case":
                                 unsafe_allow_html=True,
                             )
 
-                        elif r["Status"] == "Needs Review":
-
-                            c4.markdown(
-                                """
-                                <span class="badge badge-orange">
-                                    Needs Review
-                                </span>
-                                """,
-                                unsafe_allow_html=True,
-                            )
-
                         else:
 
                             c4.markdown(
@@ -3067,66 +3843,10 @@ elif page_to_show == "Document Check Case":
 
                 else:
 
-                    reviews = (
-                        comp[comp["Status"] == "Needs Review"].copy()
-                        if "Status" in comp.columns
-                        else pd.DataFrame()
+                    st.success(
+                        "No discrepancies detected in the "
+                        "current comparison data."
                     )
-
-                    if not reviews.empty:
-
-                        st.warning(
-                            "One or more fields require human review "
-                            "before the BL can be finalised."
-                        )
-
-                    elif comp.empty:
-
-                        backend_result = {}
-
-                        if (
-                            BACKEND_AVAILABLE
-                            and process_email is not None
-                            and record.get("ID") is not None
-                        ):
-                            backend_result = process_backend_email(
-                                record.get("ID")
-                            )
-
-                        if backend_result.get("status") == "human_review":
-
-                            review_reason = (
-                                backend_result.get("reason")
-                                or backend_result.get("review_reason")
-                                or "Manual review is required."
-                            )
-
-                            st.warning(
-                                f"Human review required: {review_reason}"
-                            )
-
-                        elif backend_result.get("status") in {
-                            "failed",
-                            "backend_unavailable",
-                            "email_not_found",
-                        }:
-
-                            failure_reason = (
-                                backend_result.get("reason")
-                                or "Backend processing was not completed."
-                            )
-
-                            st.error(
-                                f"Comparison could not be completed: "
-                                f"{failure_reason}"
-                            )
-
-                    else:
-
-                        st.success(
-                            "All comparable fields were verified "
-                            "with no discrepancy or review condition."
-                        )
 
             with tab2:
 
@@ -3423,30 +4143,13 @@ elif page_to_show == "Document Check Case":
 
             discrepancies = get_discrepancies(comp)
 
-            match_count = int(
-                (comp["Status"] == "Match").sum()
-            ) if "Status" in comp.columns else 0
+            discrepancy_count = len(discrepancies)
 
-            discrepancy_count = int(
-                (comp["Status"] == "Discrepancy").sum()
-            ) if "Status" in comp.columns else 0
-
-            review_count = int(
-                (comp["Status"] == "Needs Review").sum()
-            ) if "Status" in comp.columns else 0
-
-            if (
-                comp.empty
-                and BACKEND_AVAILABLE
-                and process_email is not None
-                and record.get("ID") is not None
-            ):
-                summary_backend_result = process_backend_email(
-                    record.get("ID")
-                )
-
-                if summary_backend_result.get("status") == "human_review":
-                    review_count = 1
+            plural_text = (
+                "discrepancy"
+                if discrepancy_count == 1
+                else "discrepancies"
+            )
 
             st.markdown(
                 f"""
@@ -3457,31 +4160,11 @@ elif page_to_show == "Document Check Case":
                     </div>
 
                     <div class="ai-summary-label">
-                        Verified Matches
+                        Issues detected
                     </div>
 
                     <div class="ai-summary-value">
-                        {match_count}
-                    </div>
-
-                    <br>
-
-                    <div class="ai-summary-label">
-                        Discrepancies
-                    </div>
-
-                    <div class="ai-summary-value">
-                        {discrepancy_count}
-                    </div>
-
-                    <br>
-
-                    <div class="ai-summary-label">
-                        Needs Review
-                    </div>
-
-                    <div class="ai-summary-value">
-                        {review_count}
+                        {discrepancy_count} {plural_text}
                     </div>
                 """,
                 unsafe_allow_html=True,
@@ -3576,196 +4259,44 @@ elif page_to_show == "Document Check Case":
                 unsafe_allow_html=True,
             )
 
-            reviews = (
-                comp[comp["Status"] == "Needs Review"].copy()
-                if "Status" in comp.columns
-                else pd.DataFrame()
-            )
-
-            backend_result = {}
-
-            if (
-                BACKEND_AVAILABLE
-                and process_email is not None
-                and record.get("ID") is not None
-            ):
-                backend_result = process_backend_email(
-                    record.get("ID")
-                )
-
-            explanation_shown = False
-
             if not discrepancies.empty:
 
-                explanation_shown = True
-
                 st.write(
-                    "Deterministic verification found field-level "
-                    "discrepancies between the SI and draft BL."
+                    "The system found discrepancy data in "
+                    "the current document comparison."
+                )
+
+                st.markdown(
+                    "<ul style='font-size:12px;color:#60748d;'>",
+                    unsafe_allow_html=True,
                 )
 
                 for _, discrepancy in discrepancies.iterrows():
 
-                    si_confidence = discrepancy.get(
-                        "SI Confidence"
-                    )
-
-                    bl_confidence = discrepancy.get(
-                        "BL Confidence"
-                    )
-
-                    si_confidence_text = (
-                        "N/A"
-                        if pd.isna(si_confidence)
-                        else f"{float(si_confidence) * 100:.0f}%"
-                    )
-
-                    bl_confidence_text = (
-                        "N/A"
-                        if pd.isna(bl_confidence)
-                        else f"{float(bl_confidence) * 100:.0f}%"
-                    )
-
                     st.markdown(
                         f"""
-                        <hr>
-
-                        <b>{safe_text(discrepancy["Field"])}</b><br>
-                        SI: {safe_text(discrepancy["Shipping Instruction (SI)"])}<br>
-                        BL: {safe_text(discrepancy["Draft Bill of Lading (BL)"])}<br>
-                        Reason: {safe_text(humanize_verification_reason(
-                            discrepancy.get("Verification Reason"),
-                            discrepancy.get("Shipping Instruction (SI)"),
-                            discrepancy.get("Draft Bill of Lading (BL)"),
-                        ))}<br>
-                        Confidence: SI {safe_text(si_confidence_text)}
-                        · BL {safe_text(bl_confidence_text)}<br>
-                        Source: SI {safe_text(discrepancy.get("SI Source"))}
-                        · BL {safe_text(discrepancy.get("BL Source"))}
+                        <li>
+                            <b>{safe_text(discrepancy["Field"])}</b>:
+                            SI =
+                            {safe_text(discrepancy["Shipping Instruction (SI)"])}
+                            · BL =
+                            {safe_text(discrepancy["Draft Bill of Lading (BL)"])}
+                        </li>
                         """,
                         unsafe_allow_html=True,
                     )
 
-            if not reviews.empty:
-
-                explanation_shown = True
-
-                st.write(
-                    "One or more fields could not be verified "
-                    "reliably and require human review."
-                )
-
-                for _, review in reviews.iterrows():
-
-                    si_confidence = review.get(
-                        "SI Confidence"
-                    )
-
-                    bl_confidence = review.get(
-                        "BL Confidence"
-                    )
-
-                    si_confidence_text = (
-                        "N/A"
-                        if pd.isna(si_confidence)
-                        else f"{float(si_confidence) * 100:.0f}%"
-                    )
-
-                    bl_confidence_text = (
-                        "N/A"
-                        if pd.isna(bl_confidence)
-                        else f"{float(bl_confidence) * 100:.0f}%"
-                    )
-
-                    st.markdown(
-                        f"""
-                        <hr>
-
-                        <b>{safe_text(review["Field"])}</b><br>
-                        Status: Needs Review<br>
-                        SI: {safe_text(review["Shipping Instruction (SI)"])}<br>
-                        BL: {safe_text(review["Draft Bill of Lading (BL)"])}<br>
-                        Reason: {safe_text(humanize_verification_reason(
-                            review.get("Verification Reason"),
-                            review.get("Shipping Instruction (SI)"),
-                            review.get("Draft Bill of Lading (BL)"),
-                        ))}<br>
-                        Confidence: SI {safe_text(si_confidence_text)}
-                        · BL {safe_text(bl_confidence_text)}<br>
-                        Source: SI {safe_text(review.get("SI Source"))}
-                        · BL {safe_text(review.get("BL Source"))}
-                        """,
-                        unsafe_allow_html=True,
-                    )
-
-            if (
-                comp.empty
-                and backend_result.get("status") == "human_review"
-            ):
-
-                explanation_shown = True
-
-                review_reason = (
-                    backend_result.get("reason")
-                    or backend_result.get("review_reason")
-                    or "Manual review is required."
-                )
-
-                st.write(
-                    "Automatic field comparison could not be completed."
-                )
-
                 st.markdown(
-                    f"""
-                    <b>Human Review Required</b><br>
-                    Reason: {safe_text(review_reason)}
-                    """,
+                    "</ul>",
                     unsafe_allow_html=True,
                 )
 
-            if (
-                comp.empty
-                and backend_result.get("status")
-                in {
-                    "failed",
-                    "backend_unavailable",
-                    "email_not_found",
-                }
-            ):
-
-                explanation_shown = True
-
-                failure_reason = (
-                    backend_result.get("reason")
-                    or "Backend processing was not completed."
-                )
+            else:
 
                 st.write(
-                    "The comparison could not be completed."
+                    "No discrepancy is currently detected "
+                    "from the comparison data."
                 )
-
-                st.markdown(
-                    f"""
-                    <b>Processing Status</b><br>
-                    Reason: {safe_text(failure_reason)}
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-            if not explanation_shown:
-
-                if not comp.empty:
-
-                    st.write(
-                        "All comparable fields were verified "
-                        "with no discrepancy or review condition."
-                    )
-
-                else:
-
-                    st.write(
-                        "No comparison data is currently available."
-                    )
 
             st.markdown(
                 "</div>",
@@ -3997,14 +4528,15 @@ elif page_to_show == "Settings":
         key="settings_back",
     ):
 
-        go_to(
-            main_nav="Home",
-            insights_nav=None,
-            system_nav=None,
-            page_override=None,
-            case_view=False,
-            selected_record_id=None,
-        )
+        st.session_state["_pending_nav"] = {
+            "main_nav": "Home",
+            "insights_nav": None,
+            "system_nav": None,
+            "page_override": None,
+            "case_view": False,
+            "selected_record_id": None,
+        }
+        st.rerun()
 
     st.write("")
 
@@ -4012,6 +4544,22 @@ elif page_to_show == "Settings":
         '<div class="panel">',
         unsafe_allow_html=True,
     )
+
+    current_dark = st.session_state.get("app_theme", "light") == "dark"
+
+    dark_mode = st.toggle(
+        "Dark mode",
+        value=current_dark,
+        key="setting_dark_mode",
+        help="Switch the entire ShipGuard interface between light and dark mode.",
+    )
+
+    new_theme = "dark" if dark_mode else "light"
+    if new_theme != st.session_state.get("app_theme"):
+        st.session_state["app_theme"] = new_theme
+        st.rerun()
+
+    st.caption("Theme applies to the entire application, including navigation, review panels, tables and controls.")
 
     email_notifications = st.toggle(
         "Email notifications",
