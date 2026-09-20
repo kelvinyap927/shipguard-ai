@@ -6,8 +6,6 @@ __pycache__/
 venv/
 
 # Organizer dataset - keep local
-attachments/
-inbox/
 
 # Generated results
 out/
