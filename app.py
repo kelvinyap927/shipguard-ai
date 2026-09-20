@@ -1669,6 +1669,8 @@ def load_backend_records():
     # Fall back to the built-in demo records when the local inbox is empty
     # or unavailable. This keeps the dashboard usable even without source
     # email files or external backend data.
+    st.session_state["demo_mode"] = not bool(emails)
+
     if not emails:
         return ensure_record_schema(pd.DataFrame(DEFAULT_CASES))
 
@@ -2389,10 +2391,32 @@ def get_review_note(record_id):
 
 
 def get_comparison_for_record(record):
+    shipment = record.get("Shipment")
+
+    if st.session_state.get("demo_mode", False):
+        if comparison_df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "Field",
+                    "Shipping Instruction (SI)",
+                    "Draft Bill of Lading (BL)",
+                ]
+            )
+
+        if "Shipment" in comparison_df.columns:
+            return comparison_df[
+                comparison_df["Shipment"].astype(str)
+                == str(shipment)
+            ].copy()
+
+        return comparison_df.copy()
+
     record_id = record.get("ID")
 
     if record_id is not None:
-        pipeline_result = get_effective_backend_result(record_id)
+        pipeline_result = get_effective_backend_result(
+            record_id
+        )
 
         return verification_to_comparison(
             record_id,
@@ -2407,8 +2431,6 @@ def get_comparison_for_record(record):
                 "Draft Bill of Lading (BL)",
             ]
         )
-
-    shipment = record.get("Shipment")
 
     if "Shipment" in comparison_df.columns:
         return comparison_df[
@@ -3120,16 +3142,28 @@ if page_to_show == "Home":
     st.write("")
 
     analysis_total_hint = len(df)
+    demo_mode = bool(
+        st.session_state.get("demo_mode", False)
+    )
+    run_full_analysis = False
 
     run_col, analysis_info_col = st.columns([1.5, 3.5])
 
     with run_col:
-        run_full_analysis = st.button(
-            f"Run Full Analysis — {analysis_total_hint} emails",
-            type="primary",
-            use_container_width=True,
-            key="run_full_analysis",
-        )
+        if demo_mode:
+            st.button(
+                "Full Analysis unavailable in Demo Mode",
+                disabled=True,
+                use_container_width=True,
+                key="run_full_analysis_demo",
+            )
+        else:
+            run_full_analysis = st.button(
+                f"Run Full Analysis — {analysis_total_hint} emails",
+                type="primary",
+                use_container_width=True,
+                key="run_full_analysis",
+            )
 
     with analysis_info_col:
         existing_summary = (
@@ -3140,7 +3174,12 @@ if page_to_show == "Home":
             existing_summary.get("processed", 0)
         )
 
-        if existing_processed:
+        if demo_mode:
+            st.caption(
+                "Demo Mode: source inbox data is unavailable. "
+                "Built-in sample records are shown for interface demonstration."
+            )
+        elif existing_processed:
             st.caption(
                 "Latest analysis: "
                 f"{existing_processed}/"
@@ -4630,6 +4669,12 @@ elif page_to_show == "Document Check Case":
                 review_discrepancies = get_discrepancies(
                     review_comp
                 )
+
+                if st.session_state.get("demo_mode", False):
+                    st.info(
+                        "Human correction and re-verification require the live source inbox."
+                    )
+                    review_discrepancies = pd.DataFrame()
 
                 correction_field_map = {
                     "Shipper": "shipper",
