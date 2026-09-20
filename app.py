@@ -1573,6 +1573,12 @@ DEFAULT_COMPARISON = [
     },
     {
         "Shipment": "SI-2026-0821",
+        "Field": "Notify Party",
+        "Shipping Instruction (SI)": "XYZ Logistics Pte. Ltd.",
+        "Draft Bill of Lading (BL)": "XYZ Logistics Pte. Ltd.",
+    },
+    {
+        "Shipment": "SI-2026-0821",
         "Field": "Port of Loading",
         "Shipping Instruction (SI)": "Shanghai",
         "Draft Bill of Lading (BL)": "Load Port: Shanghai",
@@ -1585,21 +1591,9 @@ DEFAULT_COMPARISON = [
     },
     {
         "Shipment": "SI-2026-0821",
-        "Field": "Vessel",
-        "Shipping Instruction (SI)": "MV Ocean Star",
-        "Draft Bill of Lading (BL)": "MV Ocean Star",
-    },
-    {
-        "Shipment": "SI-2026-0821",
-        "Field": "Container",
-        "Shipping Instruction (SI)": "TCNU1234567",
-        "Draft Bill of Lading (BL)": "TCNU1234567",
-    },
-    {
-        "Shipment": "SI-2026-0821",
-        "Field": "Quantity",
-        "Shipping Instruction (SI)": "500 CTNS",
-        "Draft Bill of Lading (BL)": "500 CTNS",
+        "Field": "Container Count",
+        "Shipping Instruction (SI)": "1",
+        "Draft Bill of Lading (BL)": "1",
     },
     {
         "Shipment": "SI-2026-0821",
