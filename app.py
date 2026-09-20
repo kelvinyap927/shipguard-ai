@@ -68,7 +68,7 @@ body,
 }
 
 .stApp {
-    background: #f5f8fc;
+    background: var(--background-color);
 }
 
 .block-container {
@@ -256,7 +256,8 @@ section[data-testid="stSidebar"] div[role="radiogroup"] > label[data-checked="tr
 h1,
 h2,
 h3 {
-    color: #12253f;
+    color: var(--text-color) !important;
+    -webkit-text-fill-color: var(--text-color) !important;
 }
 
 h1 {
@@ -676,6 +677,7 @@ section[data-testid="stSidebar"] div[data-testid="stPopover"] button {
     text-align: center;
     box-shadow: 0 8px 30px rgba(23,54,90,.08);
 }
+
 
 </style>
 """,
