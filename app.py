@@ -1127,13 +1127,55 @@ def priority_badge(text):
 
 
 def status_badge(text):
-    cls = "badge-green" if text == "Done" else "badge-orange"
+    classes = {
+        "Done": "badge-green",
+        "Verified": "badge-green",
+        "Discrepancy": "badge-red",
+        "Needs Review": "badge-orange",
+        "Processing Error": "badge-red",
+        "Under Review": "badge-orange",
+    }
+
+    cls = classes.get(text, "badge-blue")
 
     return f"""
     <span class="badge {cls}">
         {safe_text(text)}
     </span>
     """
+
+
+def get_record_display_status(record):
+    current_status = record.get("Status")
+
+    if current_status == "Done":
+        return "Done"
+
+    if record.get("Type") != "Document Check":
+        return current_status or "Done"
+
+    if (
+        BACKEND_AVAILABLE
+        and process_email is not None
+        and record.get("ID") is not None
+    ):
+        pipeline_result = process_backend_email(
+            record.get("ID")
+        )
+
+        status_map = {
+            "verified": "Verified",
+            "mismatch": "Discrepancy",
+            "human_review": "Needs Review",
+            "failed": "Processing Error",
+        }
+
+        return status_map.get(
+            pipeline_result.get("status"),
+            current_status or "Under Review",
+        )
+
+    return current_status or "Under Review"
 
 
 def get_record_by_id(record_id):
@@ -1472,6 +1514,88 @@ def format_difference(si_value, bl_value):
         return f"{int(difference):,}"
 
     return f"{difference:,.2f}"
+
+
+def humanize_verification_reason(
+    reason,
+    si_value=None,
+    bl_value=None,
+):
+    raw_reason = str(reason or "").strip()
+    reason_text = raw_reason.lower()
+
+    si_missing = str(si_value).strip().lower() in {
+        "",
+        "missing",
+        "none",
+        "nan",
+    }
+
+    bl_missing = str(bl_value).strip().lower() in {
+        "",
+        "missing",
+        "none",
+        "nan",
+    }
+
+    if (
+        "missing_value" in reason_text
+        or "missing value" in reason_text
+        or si_missing
+        or bl_missing
+    ):
+        if si_missing and bl_missing:
+            return (
+                "Both SI and BL values are missing, so this field "
+                "cannot be verified reliably."
+            )
+
+        if si_missing:
+            return (
+                "The SI value is missing, so this field cannot be "
+                "verified reliably."
+            )
+
+        if bl_missing:
+            return (
+                "The BL value is missing, so this field cannot be "
+                "verified reliably."
+            )
+
+    if "low_confidence" in reason_text or "low confidence" in reason_text:
+        return (
+            "The extracted value has low confidence, so human review "
+            "is required before a decision can be made."
+        )
+
+    if (
+        "normalised entity values differ" in reason_text
+        or "normalized entity values differ" in reason_text
+    ):
+        return (
+            "The normalized SI and BL entity values are different."
+        )
+
+    if (
+        "normalised port values differ" in reason_text
+        or "normalized port values differ" in reason_text
+    ):
+        return (
+            "The normalized SI and BL port values are different."
+        )
+
+    if (
+        "normalised numeric values differ" in reason_text
+        or "normalized numeric values differ" in reason_text
+    ):
+        return (
+            "The normalized SI and BL numeric values are different."
+        )
+
+    if raw_reason:
+        return raw_reason
+
+    return "This field could not be verified reliably."
 
 
 def get_discrepancies(comp_df):
@@ -1815,18 +1939,18 @@ with st.sidebar:
         <div class="sidebar-divider"></div>
 
         <div class="sidebar-section">
-            Review Status
+            Inbox Overview
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    under_review = int(
-        (df["Status"] == "Under Review").sum()
+    document_checks = int(
+        (df["Type"] == "Document Check").sum()
     )
 
-    done = int(
-        (df["Status"] == "Done").sum()
+    other_emails = int(
+        (df["Type"] != "Document Check").sum()
     )
 
     status_c1, status_c2 = st.columns(2)
@@ -1837,11 +1961,11 @@ with st.sidebar:
             f"""
             <div class="status-card">
                 <div class="status-label">
-                    Under review
+                    Document checks
                 </div>
 
                 <div class="status-value">
-                    {under_review}
+                    {document_checks}
                 </div>
             </div>
             """,
@@ -1854,11 +1978,11 @@ with st.sidebar:
             f"""
             <div class="status-card">
                 <div class="status-label">
-                    Done
+                    Other emails
                 </div>
 
                 <div class="status-value">
-                    {done}
+                    {other_emails}
                 </div>
             </div>
             """,
@@ -2755,7 +2879,7 @@ elif page_to_show == "Document Check Case":
 
         {priority_badge(record["Priority"])}
 
-        {status_badge(record.get("Status", "Under Review"))}
+        {status_badge(get_record_display_status(record))}
 
         <span style="
             color:#70839a;
@@ -2943,10 +3067,66 @@ elif page_to_show == "Document Check Case":
 
                 else:
 
-                    st.success(
-                        "No discrepancies detected in the "
-                        "current comparison data."
+                    reviews = (
+                        comp[comp["Status"] == "Needs Review"].copy()
+                        if "Status" in comp.columns
+                        else pd.DataFrame()
                     )
+
+                    if not reviews.empty:
+
+                        st.warning(
+                            "One or more fields require human review "
+                            "before the BL can be finalised."
+                        )
+
+                    elif comp.empty:
+
+                        backend_result = {}
+
+                        if (
+                            BACKEND_AVAILABLE
+                            and process_email is not None
+                            and record.get("ID") is not None
+                        ):
+                            backend_result = process_backend_email(
+                                record.get("ID")
+                            )
+
+                        if backend_result.get("status") == "human_review":
+
+                            review_reason = (
+                                backend_result.get("reason")
+                                or backend_result.get("review_reason")
+                                or "Manual review is required."
+                            )
+
+                            st.warning(
+                                f"Human review required: {review_reason}"
+                            )
+
+                        elif backend_result.get("status") in {
+                            "failed",
+                            "backend_unavailable",
+                            "email_not_found",
+                        }:
+
+                            failure_reason = (
+                                backend_result.get("reason")
+                                or "Backend processing was not completed."
+                            )
+
+                            st.error(
+                                f"Comparison could not be completed: "
+                                f"{failure_reason}"
+                            )
+
+                    else:
+
+                        st.success(
+                            "All comparable fields were verified "
+                            "with no discrepancy or review condition."
+                        )
 
             with tab2:
 
@@ -3255,6 +3435,19 @@ elif page_to_show == "Document Check Case":
                 (comp["Status"] == "Needs Review").sum()
             ) if "Status" in comp.columns else 0
 
+            if (
+                comp.empty
+                and BACKEND_AVAILABLE
+                and process_email is not None
+                and record.get("ID") is not None
+            ):
+                summary_backend_result = process_backend_email(
+                    record.get("ID")
+                )
+
+                if summary_backend_result.get("status") == "human_review":
+                    review_count = 1
+
             st.markdown(
                 f"""
                 <div class="ai-summary">
@@ -3440,7 +3633,11 @@ elif page_to_show == "Document Check Case":
                         <b>{safe_text(discrepancy["Field"])}</b><br>
                         SI: {safe_text(discrepancy["Shipping Instruction (SI)"])}<br>
                         BL: {safe_text(discrepancy["Draft Bill of Lading (BL)"])}<br>
-                        Reason: {safe_text(discrepancy.get("Verification Reason"))}<br>
+                        Reason: {safe_text(humanize_verification_reason(
+                            discrepancy.get("Verification Reason"),
+                            discrepancy.get("Shipping Instruction (SI)"),
+                            discrepancy.get("Draft Bill of Lading (BL)"),
+                        ))}<br>
                         Confidence: SI {safe_text(si_confidence_text)}
                         · BL {safe_text(bl_confidence_text)}<br>
                         Source: SI {safe_text(discrepancy.get("SI Source"))}
@@ -3488,7 +3685,11 @@ elif page_to_show == "Document Check Case":
                         Status: Needs Review<br>
                         SI: {safe_text(review["Shipping Instruction (SI)"])}<br>
                         BL: {safe_text(review["Draft Bill of Lading (BL)"])}<br>
-                        Reason: {safe_text(review.get("Verification Reason"))}<br>
+                        Reason: {safe_text(humanize_verification_reason(
+                            review.get("Verification Reason"),
+                            review.get("Shipping Instruction (SI)"),
+                            review.get("Draft Bill of Lading (BL)"),
+                        ))}<br>
                         Confidence: SI {safe_text(si_confidence_text)}
                         · BL {safe_text(bl_confidence_text)}<br>
                         Source: SI {safe_text(review.get("SI Source"))}
