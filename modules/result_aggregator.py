@@ -1,4 +1,5 @@
 from modules.json_export import email_to_clean
+from modules.evidence_builder import build_field_evidence
 
 
 def aggregate_result(email, pipeline_result, verification=None):
@@ -34,5 +35,7 @@ def aggregate_result(email, pipeline_result, verification=None):
 
     if clean_documents is not None:
         result["documents"] = clean_documents
+
+    result["evidence"] = build_field_evidence(result)
 
     return result
