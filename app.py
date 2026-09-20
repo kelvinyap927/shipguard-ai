@@ -6259,3 +6259,4 @@ else:
     st.session_state["insights_nav"] = None
     st.session_state["system_nav"] = None
     st.rerun()
+    
