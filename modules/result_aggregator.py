@@ -20,7 +20,11 @@ def aggregate_result(email, pipeline_result, verification=None):
         },
 
         "documents": None,
-        "verification": verification,
+        "verification": (
+            verification
+            if verification is not None
+            else pipeline_result.get("verification")
+        ),
 
         "audit_log": pipeline_result.get("audit_log", []),
         "errors": pipeline_result.get("errors", []),

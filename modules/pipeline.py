@@ -1,6 +1,8 @@
 from modules.document_job import build_document_job
 from modules.hybrid_classifier import classify_email_hybrid
 from modules.extraction_job import run_extraction
+from modules.verification_adapter import build_verification_payload
+from member_c_verifier import verify
 
 
 def process_email(email):
@@ -119,11 +121,35 @@ def process_email(email):
         audit_log.extend(extraction.pop("audit"))
 
         result["extraction"] = extraction
-        result["status"] = extraction["status"]           # "extracted" or "human_review"
 
-        if extraction["status"] == "human_review":
-            result["review_reason"] = extraction["review_reason"]
-            result["reason"] = "; ".join(extraction["review_notes"]) or extraction["review_reason"]
+        # Step 7: Verify extracted SI and BL fields
+        verification_payload = build_verification_payload(extraction)
+
+        verification = verify(
+            verification_payload,
+            email_id=email.get("email_id"),
+            category="BL_COMPARISON"
+        )
+
+        result["verification"] = verification
+
+        audit_log.append({
+            "step": "verification",
+            "message": verification.get("message", "Verification completed")
+        })
+
+        if verification["status"] == "NEEDS_REVIEW":
+            result["status"] = "human_review"
+            result["review_reason"] = verification.get("review_reason")
+            result["reason"] = verification.get("message")
+
+        elif verification["status"] == "MISMATCH":
+            result["status"] = "mismatch"
+            result["reason"] = verification.get("message")
+
+        else:
+            result["status"] = "verified"
+            result["reason"] = verification.get("message")
 
         return result
 
