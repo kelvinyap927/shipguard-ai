@@ -128,67 +128,36 @@ for _field, _aliases in LABEL_ALIASES.items():
 # ---------------------------------------------------------------------------
 # Advanced label matching
 # ---------------------------------------------------------------------------
+# Words that flip the MEANING of a port label. A typo-tolerant match must never turn
+# "Port of Unloading" into "Port of Loading" (they differ by only two letters).
+_LOAD_WORDS = ("load", "receipt", "origin", "depart")
+_DISCHARGE_WORDS = ("unload", "discharg", "destin", "deliver")
+
+
+def _meaning_flips(key: str, field: str) -> bool:
+    if field == "port_of_loading":
+        return any(w in key for w in _DISCHARGE_WORDS)
+    if field == "port_of_discharge":
+        return any(w in key for w in _LOAD_WORDS) and "unload" not in key
+    return False
+
 
 def lookup_label(text: str, cutoff=None):
     """
     Resolve a document label to one of the seven required fields.
-
-    Returns:
-
-        (field, similarity)
-
-    Exact:
-        1.0
-
-    Fuzzy:
-        similarity from 0..1
-
+    Returns (field, similarity): 1.0 for an exact label, 0..1 for a typo'd one.
+    cutoff=None -> exact matches only;  cutoff=0.88 -> also accept near-exact labels.
     """
-
     key = _compact(text)
-
     if not key:
         return None
-
-    # ---------------------------------------------------------------
-    # Exact match
-    # ---------------------------------------------------------------
-
     if key in ALIAS_TO_FIELD:
-
-        return (
-            ALIAS_TO_FIELD[key],
-            1.0,
-        )
-
-    # ---------------------------------------------------------------
-    # Fuzzy match
-    # ---------------------------------------------------------------
-
+        return ALIAS_TO_FIELD[key], 1.0
     if cutoff and len(key) > 4:
-
-        hit = get_close_matches(
-            key,
-            ALIAS_TO_FIELD.keys(),
-            n=1,
-            cutoff=cutoff,
-        )
-
-        if hit:
-
-            score = SequenceMatcher(
-                None,
-                key,
-                hit[0],
-            ).ratio()
-
-            return (
-                ALIAS_TO_FIELD[hit[0]],
-                round(score, 3),
-            )
-
+        hit = get_close_matches(key, ALIAS_TO_FIELD.keys(), n=1, cutoff=cutoff)
+        if hit and not _meaning_flips(key, ALIAS_TO_FIELD[hit[0]]):
+            return ALIAS_TO_FIELD[hit[0]], round(SequenceMatcher(None, key, hit[0]).ratio(), 3)
     return None
-
 
 # ---------------------------------------------------------------------------
 # Label line parser
@@ -346,7 +315,6 @@ def parse_label_line(
         )
 
     return None
-
 
 # ---------------------------------------------------------------------------
 # Document type detection

@@ -1,109 +1,253 @@
 """
 candidate_engine.py
 
-Advanced candidate-generation and ranking engine for shipping documents.
+Multi-evidence candidate ranking engine for shipping documents.
 
-Instead of accepting the first value found by the parser, this module
-generates multiple possible candidates and scores them using:
+The extractor should never blindly trust the first value it encounters.
 
-    1. Label similarity
-    2. Distance between label and value
-    3. Value plausibility
-    4. Field-specific semantics
-    5. Negative evidence
-    6. OCR risk
-    7. Unit consistency
-    8. Document structure
+For every possible value we calculate:
 
-The winning candidate is retained, while rejected candidates are also
-available for explainability and debugging.
+    - label similarity
+    - semantic relevance
+    - document proximity
+    - value plausibility
+    - unit consistency
+    - source reliability
+    - OCR risk
+    - negative evidence
+    - structural evidence
+
+The engine returns the best candidate AND keeps the rejected candidates.
+
+This makes extraction explainable and auditable.
 """
 
-import re
 from dataclasses import dataclass, asdict
 from difflib import SequenceMatcher
+import re
 
 
-# ---------------------------------------------------------------------------
-# Candidate model
-# ---------------------------------------------------------------------------
+# ============================================================================
+# SOURCE RELIABILITY
+# ============================================================================
+
+SOURCE_RELIABILITY = {
+    "text": 0.99,
+    "pdf_text": 0.97,
+    "docx": 0.97,
+    "xlsx": 0.97,
+    "rule": 0.96,
+    "structural_fallback": 0.72,
+    "ocr": 0.70,
+    "ocr+ai": 0.95,
+    "ai_text": 0.65,
+    "ai_vision": 0.65,
+}
+
+
+# ============================================================================
+# FIELD SEMANTICS
+# ============================================================================
+
+FIELD_TERMS = {
+
+    "shipper": {
+        "positive": (
+            "shipper",
+            "exporter",
+            "consignor",
+            "seller",
+            "principalshipper",
+        ),
+        "negative": (
+            "consignee",
+            "notify",
+            "importer",
+            "buyer",
+        ),
+    },
+
+    "consignee": {
+        "positive": (
+            "consignee",
+            "importer",
+            "receiver",
+            "buyer",
+            "orderof",
+        ),
+        "negative": (
+            "shipper",
+            "exporter",
+            "notify",
+        ),
+    },
+
+    "notify_party": {
+        "positive": (
+            "notify",
+            "notifyparty",
+            "intermediateconsignee",
+        ),
+        "negative": (
+            "shipper",
+            "consignee",
+        ),
+    },
+
+    "port_of_loading": {
+        "positive": (
+            "portofloading",
+            "loadingport",
+            "loadport",
+            "pol",
+            "originport",
+            "placeofloading",
+            "portofshipment",
+        ),
+        "negative": (
+            "portofdischarge",
+            "dischargeport",
+            "destinationport",
+            "pod",
+        ),
+    },
+
+    "port_of_discharge": {
+        "positive": (
+            "portofdischarge",
+            "dischargeport",
+            "destinationport",
+            "pod",
+            "finalport",
+            "placeofdischarge",
+        ),
+        "negative": (
+            "portofloading",
+            "loadingport",
+            "loadport",
+            "pol",
+        ),
+    },
+
+    "container_count": {
+        "positive": (
+            "container",
+            "containers",
+            "containercount",
+            "numberofcontainers",
+            "quantityofcontainers",
+            "containerquantity",
+            "equipmentquantity",
+            "equipmentcount",
+        ),
+        "negative": (
+            "grossweight",
+            "netweight",
+            "tareweight",
+        ),
+    },
+
+    "gross_weight_kg": {
+        "positive": (
+            "grossweight",
+            "grosswt",
+            "grossmass",
+            "totalgrossweight",
+            "totalgrosswt",
+            "cargogrossweight",
+            "shipmentgrossweight",
+        ),
+        "negative": (
+            "netweight",
+            "netwt",
+            "netmass",
+            "tareweight",
+            "tarewt",
+            "taremass",
+        ),
+    },
+}
+
+
+# ============================================================================
+# DATACLASS
+# ============================================================================
 
 @dataclass
 class Candidate:
+
     field: str
     value: object
+
     raw_value: str
     raw_label: str
 
-    label_score: float = 0.0
-    distance_score: float = 0.0
-    semantic_score: float = 0.0
-    plausibility_score: float = 0.0
-    unit_score: float = 0.0
-    negative_score: float = 0.0
-
     source: str = "rule"
 
+    label_score: float = 0.0
+    semantic_score: float = 0.0
+    proximity_score: float = 0.0
+    plausibility_score: float = 0.0
+    unit_score: float = 0.0
+    source_score: float = 0.0
+
+    negative_penalty: float = 0.0
+
+    line_number: int = 0
+
     selected: bool = False
+
     rejection_reason: str | None = None
 
     @property
     def score(self):
-        """
-        Weighted candidate score.
-
-        Positive evidence:
-            label       30%
-            proximity   15%
-            semantics   20%
-            plausibility 20%
-            units       15%
-
-        Negative evidence is subtracted afterwards.
-        """
 
         positive = (
-            self.label_score * 0.30
-            + self.distance_score * 0.15
-            + self.semantic_score * 0.20
-            + self.plausibility_score * 0.20
-            + self.unit_score * 0.15
+            self.label_score * 0.28
+            + self.semantic_score * 0.18
+            + self.proximity_score * 0.14
+            + self.plausibility_score * 0.18
+            + self.unit_score * 0.10
+            + self.source_score * 0.12
         )
 
-        return max(
-            0.0,
-            min(
-                1.0,
-                positive - self.negative_score,
+        return round(
+            max(
+                0.0,
+                min(
+                    1.0,
+                    positive - self.negative_penalty,
+                ),
             ),
+            4,
         )
 
     def to_dict(self):
+
         result = asdict(self)
 
-        result["score"] = round(
-            self.score,
-            3,
-        )
+        result["score"] = self.score
 
         return result
 
 
-# ---------------------------------------------------------------------------
-# Generic helpers
-# ---------------------------------------------------------------------------
+# ============================================================================
+# NORMALISATION
+# ============================================================================
 
-def _normalise(text):
+def compact(value):
+
     return re.sub(
-        r"[^a-z0-9]+",
+        r"[^a-z0-9]",
         "",
-        str(text or "").lower(),
+        str(value or "").lower(),
     )
 
 
-def _similarity(a, b):
-    a = _normalise(a)
-    b = _normalise(b)
+def similarity(a, b):
+
+    a = compact(a)
+    b = compact(b)
 
     if not a or not b:
         return 0.0
@@ -115,177 +259,102 @@ def _similarity(a, b):
     ).ratio()
 
 
-# ---------------------------------------------------------------------------
-# Field semantics
-# ---------------------------------------------------------------------------
+# ============================================================================
+# SEMANTIC SCORING
+# ============================================================================
 
-FIELD_TERMS = {
+def calculate_semantic_score(
+    field,
+    label,
+):
 
-    "shipper": {
-        "positive": [
-            "shipper",
-            "exporter",
-            "consignor",
-            "seller",
-        ],
-        "negative": [
-            "consignee",
-            "notify",
-            "importer",
-            "buyer",
-        ],
-    },
+    key = compact(label)
 
-    "consignee": {
-        "positive": [
-            "consignee",
-            "importer",
-            "receiver",
-            "buyer",
-            "orderof",
-        ],
-        "negative": [
-            "shipper",
-            "exporter",
-            "notify",
-        ],
-    },
-
-    "notify_party": {
-        "positive": [
-            "notify",
-            "intermediateconsignee",
-        ],
-        "negative": [
-            "shipper",
-            "consignee",
-        ],
-    },
-
-    "port_of_loading": {
-        "positive": [
-            "portofloading",
-            "loadingport",
-            "loadport",
-            "pol",
-            "originport",
-            "placeofloading",
-        ],
-        "negative": [
-            "portofdischarge",
-            "dischargeport",
-            "destinationport",
-            "pod",
-        ],
-    },
-
-    "port_of_discharge": {
-        "positive": [
-            "portofdischarge",
-            "dischargeport",
-            "destinationport",
-            "pod",
-            "placeofdischarge",
-        ],
-        "negative": [
-            "portofloading",
-            "loadingport",
-            "loadport",
-            "pol",
-        ],
-    },
-
-    "container_count": {
-        "positive": [
-            "container",
-            "containers",
-            "containercount",
-            "numberofcontainers",
-            "quantityofcontainers",
-            "equipmentquantity",
-        ],
-        "negative": [
-            "grossweight",
-            "netweight",
-            "tareweight",
-        ],
-    },
-
-    "gross_weight_kg": {
-        "positive": [
-            "grossweight",
-            "grosswt",
-            "grossmass",
-            "totalgrossweight",
-            "totalgrosswt",
-        ],
-        "negative": [
-            "netweight",
-            "netwt",
-            "netmass",
-            "tareweight",
-            "tarewt",
-        ],
-    },
-}
-
-
-# ---------------------------------------------------------------------------
-# Semantic scoring
-# ---------------------------------------------------------------------------
-
-def semantic_score(field, label):
-
-    label_key = _normalise(label)
-
-    terms = FIELD_TERMS.get(
+    rules = FIELD_TERMS.get(
         field,
         {},
     )
 
-    positive = terms.get(
+    positive = rules.get(
         "positive",
-        [],
+        (),
     )
 
-    negative = terms.get(
+    negative = rules.get(
         "negative",
-        [],
+        (),
     )
 
-    score = 0.0
+    score = 0.50
 
     for term in positive:
 
-        if term in label_key:
-            score += 0.25
+        if term in key:
+
+            score += 0.15
 
     for term in negative:
 
-        if term in label_key:
-            score -= 0.50
+        if term in key:
+
+            score -= 0.30
 
     return max(
         0.0,
         min(
             1.0,
-            0.50 + score,
+            score,
         ),
     )
 
 
-# ---------------------------------------------------------------------------
-# Value plausibility
-# ---------------------------------------------------------------------------
+# ============================================================================
+# PROXIMITY
+# ============================================================================
 
-def plausibility_score(field, value):
+def calculate_proximity(
+    label_line,
+    value_line,
+):
+
+    distance = abs(
+        label_line
+        - value_line
+    )
+
+    if distance == 0:
+        return 1.0
+
+    if distance == 1:
+        return 0.95
+
+    if distance == 2:
+        return 0.85
+
+    if distance == 3:
+        return 0.70
+
+    if distance == 4:
+        return 0.50
+
+    return 0.30
+
+
+# ============================================================================
+# VALUE PLAUSIBILITY
+# ============================================================================
+
+def calculate_plausibility(
+    field,
+    value,
+):
 
     if value is None:
         return 0.0
 
-    # ---------------------------------------------------------------
-    # Party
-    # ---------------------------------------------------------------
+    # ------------------------------------------------------------------------
+    # PARTY
+    # ------------------------------------------------------------------------
 
     if field in (
         "shipper",
@@ -301,92 +370,100 @@ def plausibility_score(field, value):
         if len(text) > 250:
             return 0.3
 
-        # Company/address-like strings are common.
-        if re.search(
+        if not re.search(
             r"[A-Za-z]",
             text,
         ):
-            return 0.9
+            return 0.2
 
-        return 0.5
+        return 0.95
 
-    # ---------------------------------------------------------------
-    # Ports
-    # ---------------------------------------------------------------
+    # ------------------------------------------------------------------------
+    # PORT
+    # ------------------------------------------------------------------------
 
     if field in (
         "port_of_loading",
         "port_of_discharge",
     ):
 
-        text = str(value)
+        text = str(value).strip()
 
         if len(text) < 3:
             return 0.2
 
         if len(text) > 150:
-            return 0.3
+            return 0.4
 
         if re.search(
             r"[A-Za-z]",
             text,
         ):
-            return 0.9
+            return 0.95
 
-        return 0.4
+        return 0.3
 
-    # ---------------------------------------------------------------
-    # Container count
-    # ---------------------------------------------------------------
+    # ------------------------------------------------------------------------
+    # CONTAINER COUNT
+    # ------------------------------------------------------------------------
 
     if field == "container_count":
 
         try:
-            n = int(value)
+
+            number = int(value)
+
         except (
             ValueError,
             TypeError,
         ):
+
             return 0.0
 
-        if 1 <= n <= 100:
+        if 1 <= number <= 100:
             return 1.0
 
-        if 101 <= n <= 500:
+        if 101 <= number <= 500:
             return 0.5
 
         return 0.1
 
-    # ---------------------------------------------------------------
-    # Gross weight
-    # ---------------------------------------------------------------
+    # ------------------------------------------------------------------------
+    # GROSS WEIGHT
+    # ------------------------------------------------------------------------
 
     if field == "gross_weight_kg":
 
         try:
+
             weight = float(value)
+
         except (
             ValueError,
             TypeError,
         ):
+
             return 0.0
 
         if 100 <= weight <= 100_000:
             return 1.0
 
         if 100_000 < weight <= 2_000_000:
-            return 0.5
+            return 0.55
 
         return 0.1
 
     return 0.5
 
 
-# ---------------------------------------------------------------------------
-# Unit scoring
-# ---------------------------------------------------------------------------
+# ============================================================================
+# UNIT ANALYSIS
+# ============================================================================
 
-def unit_score(field, raw_value):
+def calculate_unit_score(
+    field,
+    raw_value,
+):
 
     text = str(
         raw_value or ""
@@ -395,75 +472,75 @@ def unit_score(field, raw_value):
     if field == "gross_weight_kg":
 
         if re.search(
-            r"\b(?:KG|KGS|KILOGRAMS?)\b",
+            r"\bKG\b|\bKGS\b|\bKILOGRAM",
             text,
         ):
             return 1.0
 
         if re.search(
-            r"\b(?:LB|LBS|POUNDS?)\b",
+            r"\bLB\b|\bLBS\b|\bPOUND",
             text,
         ):
-            return 0.2
+            return 0.25
 
-        return 0.6
+        return 0.65
 
     if field == "container_count":
 
         if re.search(
-            r"\b(?:CONTAINER|CONTAINERS|UNIT|UNITS)\b",
+            r"CONTAINER|UNIT|EQUIPMENT",
             text,
         ):
             return 1.0
 
-        return 0.7
+        return 0.70
 
-    return 0.8
+    return 0.85
 
 
-# ---------------------------------------------------------------------------
-# Negative evidence
-# ---------------------------------------------------------------------------
+# ============================================================================
+# NEGATIVE EVIDENCE
+# ============================================================================
 
-def negative_score(field, label, raw_value):
+def calculate_negative_penalty(
+    field,
+    label,
+    raw_value,
+):
 
-    label_key = _normalise(label)
-    value_key = _normalise(raw_value)
+    label_key = compact(label)
+    value_key = compact(raw_value)
 
     penalty = 0.0
 
-    # ---------------------------------------------------------------
-    # Gross weight vs net/tare
-    # ---------------------------------------------------------------
-
     if field == "gross_weight_kg":
 
-        if "netweight" in label_key:
-            penalty += 0.70
+        forbidden = (
+            "netweight",
+            "netwt",
+            "netmass",
+            "tareweight",
+            "tarewt",
+            "taremass",
+        )
 
-        if "netwt" in label_key:
-            penalty += 0.70
+        for term in forbidden:
 
-        if "netmass" in label_key:
-            penalty += 0.70
+            if term in label_key:
 
-        if "tareweight" in label_key:
-            penalty += 0.80
-
-        if "tarewt" in label_key:
-            penalty += 0.80
+                penalty += (
+                    0.75
+                    if "tare" not in term
+                    else 0.85
+                )
 
         if "tare" in value_key:
-            penalty += 0.50
-
-    # ---------------------------------------------------------------
-    # Container count
-    # ---------------------------------------------------------------
+            penalty += 0.40
 
     if field == "container_count":
 
         if "weight" in label_key:
-            penalty += 0.70
+            penalty += 0.75
 
     return min(
         1.0,
@@ -471,125 +548,101 @@ def negative_score(field, label, raw_value):
     )
 
 
-# ---------------------------------------------------------------------------
-# Distance scoring
-# ---------------------------------------------------------------------------
+# ============================================================================
+# CANDIDATE CREATION
+# ============================================================================
 
-def distance_score(
-    label_line_index,
-    value_line_index,
-):
-    """
-    Score proximity between a recognised label and value.
-
-    Same line = 1.0
-    Next line = 0.95
-    2 lines away = 0.80
-    etc.
-    """
-
-    distance = abs(
-        label_line_index
-        - value_line_index
-    )
-
-    return max(
-        0.1,
-        1.0 - (
-            distance * 0.10
-        ),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Candidate generation
-# ---------------------------------------------------------------------------
-
-def generate_candidate(
+def make_candidate(
     field,
-    label,
     value,
-    raw_value=None,
-    label_similarity=1.0,
-    label_line_index=0,
-    value_line_index=0,
+    raw_value,
+    raw_label,
+    *,
+    label_score=1.0,
+    label_line=0,
+    value_line=0,
     source="rule",
 ):
 
-    raw_value = (
-        raw_value
-        if raw_value is not None
-        else value
-    )
-
-    candidate = Candidate(
+    return Candidate(
 
         field=field,
 
         value=value,
 
         raw_value=str(
-            raw_value
+            raw_value or ""
         ),
 
         raw_label=str(
-            label
+            raw_label or ""
         ),
+
+        source=source,
 
         label_score=max(
             0.0,
             min(
                 1.0,
-                float(
-                    label_similarity
-                ),
+                label_score,
             ),
         ),
 
-        distance_score=distance_score(
-            label_line_index,
-            value_line_index,
-        ),
-
-        semantic_score=semantic_score(
+        semantic_score=calculate_semantic_score(
             field,
-            label,
+            raw_label,
         ),
 
-        plausibility_score=plausibility_score(
+        proximity_score=calculate_proximity(
+            label_line,
+            value_line,
+        ),
+
+        plausibility_score=calculate_plausibility(
             field,
             value,
         ),
 
-        unit_score=unit_score(
+        unit_score=calculate_unit_score(
             field,
             raw_value,
         ),
 
-        negative_score=negative_score(
+        source_score=SOURCE_RELIABILITY.get(
+            source,
+            0.75,
+        ),
+
+        negative_penalty=calculate_negative_penalty(
             field,
-            label,
+            raw_label,
             raw_value,
         ),
 
-        source=source,
+        line_number=value_line,
     )
 
-    return candidate
 
+# ============================================================================
+# RANKING
+# ============================================================================
 
-# ---------------------------------------------------------------------------
-# Candidate ranking
-# ---------------------------------------------------------------------------
-
-def rank_candidates(candidates):
+def rank_candidates(
+    candidates,
+):
 
     if not candidates:
-        return None, []
+
+        return {
+            "winner": None,
+            "candidates": [],
+            "margin": 0.0,
+            "ambiguous": False,
+        }
 
     ranked = sorted(
         candidates,
-        key=lambda c: c.score,
+        key=lambda candidate: candidate.score,
         reverse=True,
     )
 
@@ -597,39 +650,78 @@ def rank_candidates(candidates):
 
     winner.selected = True
 
-    # Explain why alternatives were rejected.
     for candidate in ranked[1:]:
 
         candidate.rejection_reason = (
-            "lower_candidate_score"
+            "lower_score"
         )
 
-    return winner, ranked
-
-
-# ---------------------------------------------------------------------------
-# Public helper
-# ---------------------------------------------------------------------------
-
-def explain_candidates(candidates):
-
-    winner, ranked = rank_candidates(
-        candidates
+    margin = (
+        winner.score
+        - ranked[1].score
+        if len(ranked) > 1
+        else 1.0
     )
 
+    ambiguous = (
+        len(ranked) > 1
+        and margin < 0.08
+    )
+
+    if ambiguous:
+
+        winner.rejection_reason = None
+
+        for candidate in ranked[1:]:
+
+            if (
+                winner.score
+                - candidate.score
+                < 0.08
+            ):
+
+                candidate.rejection_reason = (
+                    "near_tie_requires_review"
+                )
+
     return {
-        "selected": (
-            winner.to_dict()
-            if winner
+        "winner": winner,
+        "candidates": ranked,
+        "margin": round(
+            margin,
+            4,
+        ),
+        "ambiguous": ambiguous,
+    }
+
+
+# ============================================================================
+# SERIALISATION
+# ============================================================================
+
+def ranking_to_dict(
+    ranking,
+):
+
+    return {
+        "winner": (
+            ranking["winner"].to_dict()
+            if ranking["winner"]
             else None
         ),
 
-        "alternatives": [
+        "candidates": [
             candidate.to_dict()
-            for candidate in ranked[1:]
+            for candidate in ranking[
+                "candidates"
+            ]
         ],
 
-        "candidate_count": len(
-            ranked
-        ),
+        "margin": ranking[
+            "margin"
+        ],
+
+        "ambiguous": ranking[
+            "ambiguous"
+        ],
     }

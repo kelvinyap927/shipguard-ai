@@ -90,12 +90,14 @@ def parse_port(raw: str) -> dict:
 
 
 # ---------------------------------------------------------------- containers
-def parse_container_count(raw: str):
-    """
-    '6 x 40'HC' -> (6, "40'HC")     '1X20'GP' -> (1, "20'GP")     '12' -> (12, None)
-    Returns (None, None) if no count can be read.
-    """
-    s = clean(raw)
+_NUMBER_WORDS = {"ONE": 1, "TWO": 2, "THREE": 3, "FOUR": 4, "FIVE": 5, "SIX": 6, "SEVEN": 7, "EIGHT": 8,
+                 "NINE": 9, "TEN": 10, "ELEVEN": 11, "TWELVE": 12, "THIRTEEN": 13, "FOURTEEN": 14,
+                 "FIFTEEN": 15, "SIXTEEN": 16, "SEVENTEEN": 17, "EIGHTEEN": 18, "NINETEEN": 19, "TWENTY": 20}
+
+
+def _count_of_one_part(part: str):
+    """'6 x 40'HC' -> (6, "40'HC")   'Three (3) x 40HC' -> (3, '40HC')   '12' -> (12, None)"""
+    s = clean(part)
     m = re.match(r"^(\d{1,4})\s*[xX\u00d7]\s*(.*)$", s)
     if m:
         ctype = re.sub(r"\s+", "", m.group(2)).upper().replace("'X", "'") or None
@@ -103,7 +105,30 @@ def parse_container_count(raw: str):
     m = re.match(r"^(\d{1,4})\b", s)
     if m:
         return int(m.group(1)), None
+    m = re.match(r"^[A-Za-z\- ]*?\(\s*(\d{1,4})\s*\)\s*(?:[xX\u00d7]\s*(.*))?$", s)      # 'Three (3) x 40HC'
+    if m:
+        ctype = re.sub(r"\s+", "", m.group(2) or "").upper() or None
+        return int(m.group(1)), ctype
+    word = s.split(" ")[0].upper() if s else ""
+    if word in _NUMBER_WORDS:                                                              # 'THREE x 40HC'
+        rest = re.sub(r"^\S+\s*[xX\u00d7]?\s*", "", s)
+        return _NUMBER_WORDS[word], (re.sub(r"\s+", "", rest).upper() or None)
     return None, None
+
+
+def parse_container_count(raw: str):
+    """
+    '6 x 40'HC' -> (6, "40'HC")     '1X20'GP' -> (1, "20'GP")     '12' -> (12, None)
+    'Three (3) x 40HC' -> (3, '40HC')     "1 x 20'GP + 2 x 40'HC" -> (3, "20'GP + 40'HC")   (mixed sizes are added up)
+    Returns (None, None) if no count can be read.
+    """
+    s = clean(raw)
+    parts = [p for p in re.split(r"\s*(?:\+|&|;|\band\b)\s*", s, flags=re.I) if p.strip()]
+    if len(parts) > 1:
+        results = [_count_of_one_part(p) for p in parts]
+        if all(r[0] is not None for r in results):
+            return sum(r[0] for r in results), " + ".join(r[1] for r in results if r[1]) or None
+    return _count_of_one_part(s)
 
 
 # -------------------------------------------------------------------- weight
@@ -122,6 +147,7 @@ def parse_weight_kg(raw):
         return int(raw) if float(raw).is_integer() else float(raw)
 
     s = clean(raw).upper()
+    s = re.sub(r"(?<=\d)[ \u00a0](?=\d{3}\b)", "", s)            # '22 000 KG' -> '22000 KG'
     factor = 1
     if re.search(r"\b(MT|MTS|TON|TONS|TONNE|TONNES)\b", s):
         factor = 1000

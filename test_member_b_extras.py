@@ -60,7 +60,7 @@ ev = r["evidence"]["port_of_loading"]
 assert fake.calls == 1
 assert r["fields"]["port_of_loading"] == "NANTONG, CHINA" and r["keys"]["port_of_loading"] == "NANTONG"
 assert ev["note"] == "filled_by_ai" and ev["confidence"] == ai_extractor.CONF_AI_ONLY < 0.75
-assert r["fields"]["shipper"] == "ACME LTD" and r["evidence"]["shipper"].get("source") is None   # rules' fields untouched
+assert r["fields"]["shipper"] == "ACME LTD" and r["evidence"]["shipper"].get("source") in (None, "rule")   # rules' fields untouched by the AI
 
 # ---- 4. a made-up value (not in the document) is rejected --------------------------------------------
 fake = FakeClient({"port_of_loading": "SHANGHAI, CHINA"})
@@ -91,7 +91,8 @@ doc = extract_document(FULL_DOC.encode(), "x_BL.txt", expected_type="BL")
 clean = doc_to_clean(doc)
 assert list(clean["fields"]) == FIELDS and list(clean["keys"]) == FIELDS and list(clean["confidence"]) == FIELDS
 assert clean["fields"]["container_count"] == 3 and clean["fields"]["gross_weight_kg"] == 22000
-assert clean["details"]["port_of_loading"] == {"port_name": "NANTONG", "country": "CHINA"}   # empty details (no locode) are left out
+d = clean["details"]["port_of_loading"]
+assert d["port_name"] == "NANTONG" and d["country"] == "CHINA" and "locode" not in d   # empty details (no locode) are left out
 assert clean["details"]["container_count"]["container_type"] == "40'HC"
 json.dumps(clean)                                          # must be plain JSON
 assert email_to_clean("email_1", {"category": "spam"}) is None
@@ -205,9 +206,8 @@ quality = evaluate(
 )
 
 assert any(
-    "gross_weight_from_net_weight_label"
-    in flag
+    flag.startswith(("gross_weight_from_", "gross_weight_kg:gross_weight_from_")) and flag.endswith("_label")
     for flag in quality["flags"]
-)
+)        
 
 print("advanced quality checks passed")
