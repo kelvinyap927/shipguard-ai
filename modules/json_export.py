@@ -156,6 +156,26 @@ def doc_to_clean(doc: dict) -> dict:
             {},
         ),
 
+        "candidate_analysis": doc.get(
+            "candidate_analysis",
+            {}
+        ),
+
+        "completeness": quality.get(
+            "completeness",
+            0.0,
+        ),
+
+        "candidate_conflicts": quality.get(
+            "candidate_conflicts",
+            {}
+        ),
+
+        "suspicious_instructions": quality.get(
+            "suspicious_instructions",
+            []
+        ),
+
         # -----------------------------------------------------------
         # Review information
         # -----------------------------------------------------------

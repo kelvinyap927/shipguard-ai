@@ -79,17 +79,26 @@ assert col["fields"]["consignee"] == "FOO GMBH"
 assert col["fields"]["port_of_loading"] == "NANTONG, CHINA"
 assert col["fields"]["gross_weight_kg"] == 131322        # survives the 'nn' glyph artifact
 
-# ---- whole pipeline on real data (skipped if the organizers' data is not in this folder) ----
+# ---- real data (skipped if the organizers' inbox/ + attachments/ folders are not in this folder) ----
+# Tests the reading + extraction directly (document_job -> run_extraction), so the result does not
+# depend on the email classifier or on an API key.
 import os
 if os.path.isdir("inbox") and os.path.isdir("attachments"):
+    from modules.document_job import build_document_job
+    from modules.extraction_job import run_extraction
     from modules.inbox import load_inbox
-    from modules.pipeline import process_email
 
     emails = {e["email_id"]: e for e in load_inbox()}
-    r = process_email(emails["email_004"])                   # plain text pair, consignee differs
-    assert r["status"] == "extracted"
-    diff = [f for f in r["extraction"]["si"]["keys"]
-            if r["extraction"]["si"]["keys"][f] != r["extraction"]["bl"]["keys"][f]]
+
+    def run(eid):
+        job = build_document_job(emails[eid])
+        if job["status"] == "human_review":                   # e.g. an attachment is missing
+            return {"status": "human_review", "review_reason": job.get("review_reason")}
+        return run_extraction(job)
+
+    r = run("email_004")                                      # plain text pair, consignee differs
+    assert r["status"] == "extracted", (r["status"], r["review_reason"])
+    diff = [f for f in r["si"]["keys"] if r["si"]["keys"][f] != r["bl"]["keys"][f]]
     assert diff == ["consignee", "notify_party"], diff
 
     checks = {                                                # edge cases from the organizers' data
@@ -99,12 +108,23 @@ if os.path.isdir("inbox") and os.path.isdir("attachments"):
         "email_516": "missing_value",                         # SI weight left blank
     }
     for eid, reason in checks.items():
-        r = process_email(emails[eid])
+        r = run(eid)
         assert r["status"] == "human_review" and r["review_reason"] == reason, (eid, r["status"], r.get("review_reason"))
 
-    r = process_email(emails["email_055"])                    # docx BL + xlsx SI
+    # every ordinary SI/BL pair (emails 1-500) must extract cleanly with all 7 fields.
+    # This catches a label that was dropped from schema.py: the pair would silently go to human review.
+    not_clean = []
+    for eid in sorted(emails):
+        if int(eid.split("_")[1]) > 500 or len(emails[eid]["attachments"]) != 2:
+            continue
+        r = run(eid)
+        if r["status"] != "extracted":
+            not_clean.append((eid, r["review_reason"], (r.get("review_notes") or [""])[0][:60]))
+    assert not not_clean, f"{len(not_clean)} ordinary pairs were not extracted, e.g. {not_clean[:3]}"
+
+    r = run("email_055")                                      # docx BL + xlsx SI
     assert r["status"] == "extracted", r["status"]
-    print("pipeline checks passed")
+    print("real-data checks passed")
 else:
     print("(no inbox/ + attachments/ folder here - skipped the real-data checks)")
 

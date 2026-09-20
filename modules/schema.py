@@ -75,6 +75,7 @@ LABEL_ALIASES = {
         "To the Order of",
         "To Order of",
         "Order of",
+        "Consigned To",
     ],
 
     # -----------------------------------------------------------------------
@@ -114,6 +115,8 @@ LABEL_ALIASES = {
         "Departure Port",
         "Loading Place",
         "Port of Loading/Shipment",
+        "Port of Load",
+        "Port of Departure",
     ],
 
     # -----------------------------------------------------------------------
@@ -135,6 +138,8 @@ LABEL_ALIASES = {
         "Discharging Port",
         "Final Port",
         "Final Destination Port",
+        "Port of Unloading",
+        "Unloading Port",
     ],
 
     # -----------------------------------------------------------------------
@@ -161,6 +166,8 @@ LABEL_ALIASES = {
         "Equipment Quantity",
         "Equipment Qty",
         "Equipment Count",
+        "No. of Containers or Packages",
+        "No. of Container",
     ],
 
     # -----------------------------------------------------------------------
@@ -188,6 +195,8 @@ LABEL_ALIASES = {
         "Gross Weight毛重(KGS)",
         "Gross Mass (KG)",
         "Gross Mass (KGS)",
+        "G.W.", 
+        "Total G.W.",
     ],
 
     # -----------------------------------------------------------------------
