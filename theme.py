@@ -281,6 +281,33 @@ span[data-testid="stMainMenu"] svg {
     color: #f1f5f9 !important;
 }
 
+
+/* CONFIDENCE BADGE FIX */
+
+[data-testid="stMain"] .badge.confidence-high {
+    color: #087f5b !important;
+    -webkit-text-fill-color: #087f5b !important;
+    background: #e7f8f1 !important;
+    border-color: #bdebdc !important;
+    opacity: 1 !important;
+}
+
+[data-testid="stMain"] .badge.confidence-medium {
+    color: #8a5a00 !important;
+    -webkit-text-fill-color: #8a5a00 !important;
+    background: #fff3c4 !important;
+    border-color: #e8cf76 !important;
+    opacity: 1 !important;
+}
+
+[data-testid="stMain"] .badge.confidence-low {
+    color: #a33a3a !important;
+    -webkit-text-fill-color: #a33a3a !important;
+    background: #fff0f0 !important;
+    border-color: #f2c7c7 !important;
+    opacity: 1 !important;
+}
+
 </style>
 """,
         unsafe_allow_html=True,
