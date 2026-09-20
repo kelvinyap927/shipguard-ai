@@ -3,8 +3,15 @@ import pandas as pd
 from datetime import datetime
 import html
 import re
-from modules.inbox import load_inbox
-from modules.classifier import classify_email
+BACKEND_AVAILABLE = True
+
+try:
+    from modules.inbox import load_inbox
+    from modules.classifier import classify_email
+except (ModuleNotFoundError, ImportError):
+    BACKEND_AVAILABLE = False
+    load_inbox = None
+    classify_email = None
 
 # ============================================================
 # PAGE CONFIG
@@ -806,6 +813,9 @@ DEFAULT_COMPARISON = [
 
 
 def load_backend_records():
+    if not BACKEND_AVAILABLE:
+        return pd.DataFrame(DEFAULT_CASES)
+
     category_map = {
         "document_comparison": "Document Check",
         "new_si_request": "SI Request",
