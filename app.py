@@ -10,6 +10,7 @@ from modules.batch_processor import process_batch
 from modules.result_aggregator import aggregate_result
 from modules.verification_adapter import build_verification_payload
 from member_c_verifier import apply_human_correction
+from theme import inject_theme_css
 
 # ============================================================
 # PAGE CONFIGURATION
@@ -30,13 +31,14 @@ st.set_page_config(
 # leading whitespace only for unsafe HTML blocks, so cards and badges render
 # consistently without changing normal Markdown behaviour.
 # ------------------------------------------------------------
-_original_markdown = st.markdown
+if not hasattr(st, "_shipguard_original_markdown"):
+    st._shipguard_original_markdown = st.markdown
 
 
 def _dedented_markdown(body="", *args, **kwargs):
     if kwargs.get("unsafe_allow_html") and isinstance(body, str):
         body = "\n".join(line.lstrip() for line in body.split("\n"))
-    return _original_markdown(body, *args, **kwargs)
+    return st._shipguard_original_markdown(body, *args, **kwargs)
 
 
 st.markdown = _dedented_markdown
@@ -57,12 +59,6 @@ APP_STATUS = "Operational"
 # THEME / CSS
 # ============================================================
 
-# App-level theme.  This is independent of Streamlit's browser menu so the
-# entire ShipGuard interface (not just Settings) can switch together.
-if "app_theme" not in st.session_state:
-    st.session_state["app_theme"] = "light"
-
-
 st.markdown(
     """
 <style>
@@ -76,7 +72,7 @@ body,
 }
 
 .stApp {
-    background: var(--background-color);
+    background: var(--st-background-color);
 }
 
 .block-container {
@@ -264,8 +260,8 @@ section[data-testid="stSidebar"] div[role="radiogroup"] > label[data-checked="tr
 h1,
 h2,
 h3 {
-    color: var(--text-color) !important;
-    -webkit-text-fill-color: var(--text-color) !important;
+    color: var(--st-text-color) !important;
+    -webkit-text-fill-color: var(--st-text-color) !important;
 }
 
 h1 {
@@ -1369,119 +1365,529 @@ div[data-testid="stToggle"] label {
     unsafe_allow_html=True,
 )
 
-if st.session_state.get("app_theme", "light") == "dark":
-    st.markdown(
-        """
+st.markdown(
+    """
 <style>
-:root {
-    color-scheme: dark;
-}
-.stApp {
-    background: #0b1220 !important;
-    color: #e8eef6 !important;
-}
+/* ============================================================
+   STREAMLIT THEME SYNC
+   Uses Streamlit theme variables so the full app follows the
+   Light / Dark choice from the Streamlit menu.
+   ============================================================ */
+
+.stApp,
 [data-testid="stAppViewContainer"] {
-    background: #0b1220 !important;
+    background: var(--st-background-color) !important;
+    color: var(--st-text-color) !important;
 }
+
 .block-container {
-    color: #e8eef6 !important;
+    color: var(--st-text-color) !important;
 }
+
 .sg-topbar {
-    background: #111c2d !important;
-    border-color: #263b54 !important;
+    background: var(--st-background-color) !important;
+    border-color: color-mix(
+        in srgb,
+        var(--st-text-color) 14%,
+        transparent
+    ) !important;
 }
-.sg-topbar-title, .sg-topbar-path, .sg-shortcut {
-    color: #e8eef6 !important;
+
+.sg-topbar-title,
+.sg-topbar-path,
+.sg-shortcut {
+    color: var(--st-text-color) !important;
 }
-.sg-topbar-path, .sg-shortcut {
-    color: #a8bbcf !important;
+
+.sg-hero {
+    background: linear-gradient(
+        135deg,
+        var(--st-background-color) 0%,
+        var(--st-secondary-background-color) 100%
+    ) !important;
+    border-color: color-mix(
+        in srgb,
+        var(--st-text-color) 14%,
+        transparent
+    ) !important;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .10) !important;
 }
-.sg-live-pill {
-    color: #63d5ae !important;
-    background: #102d28 !important;
-    border-color: #245747 !important;
+
+.sg-hero:after {
+    background: color-mix(
+        in srgb,
+        var(--st-primary-color) 12%,
+        transparent
+    ) !important;
 }
-.panel, .metric-card, .status-card, .action-box, .table-box,
-.document-summary, .review-panel, .sidebar-user-box {
-    background: #111c2d !important;
-    border-color: #2b4058 !important;
-    color: #e8eef6 !important;
+
+.sg-eyebrow {
+    color: var(--st-primary-color) !important;
 }
-.metric-label, .status-label, .table-head, .sidebar-subtle,
-.sg-topbar-path {
-    color: #a8bbcf !important;
+
+.sg-hero-title {
+    color: var(--st-text-color) !important;
 }
-.metric-value, .status-value, .table-box *,
-.document-summary *, .review-panel *, .action-box * {
-    color: #e8eef6 !important;
+
+.sg-hero-copy {
+    color: color-mix(
+        in srgb,
+        var(--st-text-color) 72%,
+        transparent
+    ) !important;
 }
+
+.panel,
+.metric-card,
+.status-card,
+.action-box,
+.table-box,
+.document-summary,
+.review-panel,
+.priority-wrapper,
+.doc-card,
+.ai-summary,
+.case-banner {
+    background: var(--st-secondary-background-color) !important;
+    border-color: color-mix(
+        in srgb,
+        var(--st-text-color) 14%,
+        transparent
+    ) !important;
+    color: var(--st-text-color) !important;
+}
+
+.metric-value,
+.status-value,
+.panel h1,
+.panel h2,
+.panel h3,
+.panel p,
+.document-summary *,
+.review-panel *,
+.action-box * {
+    color: var(--st-text-color) !important;
+}
+
+.metric-label,
+.status-label,
+.sidebar-subtle,
+.sg-hero-copy {
+    color: color-mix(
+        in srgb,
+        var(--st-text-color) 70%,
+        transparent
+    ) !important;
+}
+
 [data-testid="stMetric"] {
-    background: #111c2d !important;
-    border-color: #2b4058 !important;
+    background: var(--st-secondary-background-color) !important;
+    color: var(--st-text-color) !important;
+    border-color: color-mix(
+        in srgb,
+        var(--st-text-color) 14%,
+        transparent
+    ) !important;
 }
+
+[data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] p,
+.stCaption,
+.stCaption p {
+    color: color-mix(
+        in srgb,
+        var(--st-text-color) 68%,
+        transparent
+    ) !important;
+    opacity: 1 !important;
+}
+
+[data-testid="stToggle"] [data-testid="stWidgetLabel"],
+[data-testid="stToggle"] [data-testid="stWidgetLabel"] p,
+[data-testid="stToggle"] label,
+[data-testid="stToggle"] label p,
+[data-testid="stToggle"] label span,
+div[data-testid="stTextInput"] label,
+div[data-testid="stSelectbox"] label,
+div[data-testid="stTextArea"] label {
+    color: var(--st-text-color) !important;
+    -webkit-text-fill-color: var(--st-text-color) !important;
+    opacity: 1 !important;
+}
+
 [data-testid="stTextInput"] input,
 [data-testid="stTextArea"] textarea,
 [data-baseweb="select"] > div {
-    background: #172438 !important;
-    color: #f2f6fb !important;
-    -webkit-text-fill-color: #f2f6fb !important;
-    border-color: #38506a !important;
+    background: var(--st-secondary-background-color) !important;
+    color: var(--st-text-color) !important;
+    -webkit-text-fill-color: var(--st-text-color) !important;
+    border-color: color-mix(
+        in srgb,
+        var(--st-text-color) 18%,
+        transparent
+    ) !important;
 }
+
+[data-testid="stButton"] > button {
+    background: var(--st-secondary-background-color) !important;
+    color: var(--st-text-color) !important;
+    -webkit-text-fill-color: var(--st-text-color) !important;
+    border-color: color-mix(
+        in srgb,
+        var(--st-text-color) 18%,
+        transparent
+    ) !important;
+}
+
+[data-testid="stButton"] > button:hover,
+[data-testid="stButton"] > button:focus-visible {
+    background: color-mix(
+        in srgb,
+        var(--st-secondary-background-color) 80%,
+        var(--st-primary-color) 20%
+    ) !important;
+    color: var(--st-text-color) !important;
+    border-color: var(--st-primary-color) !important;
+}
+
 .stTabs [data-baseweb="tab-list"] {
-    border-color: #2b4058 !important;
+    border-color: color-mix(
+        in srgb,
+        var(--st-text-color) 14%,
+        transparent
+    ) !important;
 }
+
 .stTabs [data-baseweb="tab"],
 .stTabs [data-baseweb="tab"] p,
 .stTabs [data-baseweb="tab"] span {
-    color: #b9c9da !important;
+    color: color-mix(
+        in srgb,
+        var(--st-text-color) 72%,
+        transparent
+    ) !important;
 }
+
 .stTabs [aria-selected="true"],
 .stTabs [aria-selected="true"] p,
 .stTabs [aria-selected="true"] span {
-    color: #73b8ef !important;
+    color: var(--st-primary-color) !important;
 }
-[data-testid="stCaptionContainer"],
-[data-testid="stCaptionContainer"] p {
-    color: #a8bbcf !important;
-}
-[data-testid="stButton"] > button {
-    background: #172438 !important;
-    color: #e8eef6 !important;
-    -webkit-text-fill-color: #e8eef6 !important;
-    border-color: #38506a !important;
-}
-[data-testid="stButton"] > button:hover,
-[data-testid="stButton"] > button:focus-visible {
-    background: #245b86 !important;
-    color: #ffffff !important;
-    border-color: #3d83b9 !important;
-}
-header[data-testid="stHeader"] {
-    background: #0f1a2a !important;
-    border-color: #263b54 !important;
-}
-button[data-testid="stSidebarCollapseButton"] {
-    background: #dceefb !important;
-    color: #123f5e !important;
-    border-color: #8eb8d7 !important;
-}
-button[data-testid="stSidebarCollapseButton"] svg {
-    color: #123f5e !important;
-    fill: #123f5e !important;
-    stroke: #123f5e !important;
-}
+
 div[data-testid="stAlert"] {
-    background: #172438 !important;
-    border-color: #38506a !important;
+    background: var(--st-secondary-background-color) !important;
+    border-color: color-mix(
+        in srgb,
+        var(--st-text-color) 16%,
+        transparent
+    ) !important;
 }
+
 div[data-testid="stAlert"] p,
 div[data-testid="stAlert"] span {
-    color: #e8eef6 !important;
+    color: var(--st-text-color) !important;
+}
+
+.priority-row {
+    background: var(--st-background-color) !important;
+    color: var(--st-text-color) !important;
+}
+
+.priority-row:hover {
+    background: var(--st-secondary-background-color) !important;
+}
+
+.table-head {
+    background: var(--st-secondary-background-color) !important;
+    color: var(--st-text-color) !important;
+}
+
+.sg-shortcut {
+    background: var(--st-secondary-background-color) !important;
+    border-color: color-mix(
+        in srgb,
+        var(--st-text-color) 14%,
+        transparent
+    ) !important;
+}
+
+/* Keep status badges intentionally coloured. */
+.badge,
+.type-badge,
+.badge *,
+.type-badge * {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
+
+/* Overview metric accents */
+.metric-card.type-document .metric-value {
+    color: #8b5cf6 !important;
+}
+
+.metric-card.type-si .metric-value {
+    color: #f97316 !important;
+}
+
+.metric-card.type-invoice .metric-value {
+    color: #3b82f6 !important;
+}
+
+.metric-card.type-general .metric-value {
+    color: #10b981 !important;
+}
+
+.metric-card.type-spam .metric-value {
+    color: #ef4444 !important;
+}
+
+/* Final dashboard theme polish */
+
+/* Keep main headings readable in both themes */
+[data-testid="stMain"] h1,
+[data-testid="stMain"] h2,
+[data-testid="stMain"] h3,
+[data-testid="stMain"] h4,
+[data-testid="stMain"] h5,
+[data-testid="stMain"] h6 {
+    color: var(--st-text-color) !important;
+    -webkit-text-fill-color: var(--st-text-color) !important;
+}
+
+/* Dashboard cards follow the selected Streamlit theme */
+.sg-insight-card,
+.sg-ai-callout,
+.metric-card,
+.panel,
+.action-box,
+.table-box,
+.document-summary,
+.review-panel,
+.priority-wrapper,
+.doc-card,
+.ai-summary,
+.status-card {
+    background: var(--st-secondary-background-color) !important;
+    border-color: color-mix(
+        in srgb,
+        var(--st-text-color) 14%,
+        transparent
+    ) !important;
+}
+
+/* Dashboard text contrast */
+.sg-insight-value,
+.sg-ai-callout-title,
+.metric-value,
+.status-value {
+    color: var(--st-text-color) !important;
+}
+
+.sg-insight-title,
+.sg-insight-copy,
+.sg-ai-callout-copy,
+.metric-title,
+.metric-label,
+.status-label {
+    color: color-mix(
+        in srgb,
+        var(--st-text-color) 72%,
+        transparent
+    ) !important;
+}
+
+/* Theme-aware progress tracks */
+.sg-progress {
+    background: color-mix(
+        in srgb,
+        var(--st-text-color) 12%,
+        transparent
+    ) !important;
+}
+
+/* Preserve category accent colours */
+.metric-card.type-document .metric-value {
+    color: #8b5cf6 !important;
+}
+
+.metric-card.type-si .metric-value {
+    color: #f97316 !important;
+}
+
+.metric-card.type-invoice .metric-value {
+    color: #3b82f6 !important;
+}
+
+.metric-card.type-general .metric-value,
+.metric-card.type-update .metric-value {
+    color: #10b981 !important;
+}
+
+.metric-card.type-spam .metric-value {
+    color: #ef4444 !important;
+}
+
+/* Main analysis CTA */
+button[data-testid="stBaseButton-primary"],
+[data-testid="stBaseButton-primary"],
+[data-testid="stButton"] button[kind="primary"] {
+    background: #2563eb !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    border: 1px solid #2563eb !important;
+    font-weight: 700 !important;
+    box-shadow: 0 6px 18px rgba(37, 99, 235, .22) !important;
+}
+
+button[data-testid="stBaseButton-primary"]:hover,
+[data-testid="stBaseButton-primary"]:hover,
+[data-testid="stButton"] button[kind="primary"]:hover {
+    background: #1d4ed8 !important;
+    border-color: #1d4ed8 !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    transform: translateY(-1px);
+}
+
+/* Keep coloured badges readable */
+.badge,
+.type-badge,
+.badge *,
+.type-badge * {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
+
+/* Top bar contrast in both themes */
+.sg-topbar,
+.sg-topbar-title,
+.sg-topbar-title *,
+.sg-topbar-path,
+.sg-topbar-path *,
+.sg-shortcut,
+.sg-shortcut * {
+    color: var(--st-text-color) !important;
+    -webkit-text-fill-color: var(--st-text-color) !important;
+    opacity: 1 !important;
+}
+
+.sg-shortcut {
+    background: var(--st-secondary-background-color) !important;
+    border-color: color-mix(
+        in srgb,
+        var(--st-text-color) 20%,
+        transparent
+    ) !important;
+}
+
+/* Keep the operational status pill green */
+.sg-live-pill,
+.sg-live-pill * {
+    color: #087f5b !important;
+    -webkit-text-fill-color: #087f5b !important;
+    opacity: 1 !important;
 }
 </style>
-        """,
-        unsafe_allow_html=True,
-    )
+""",
+    unsafe_allow_html=True,
+)
+
+
+st.markdown(
+    """
+<style>
+/* FINAL THEME CONTRAST OVERRIDES */
+
+/* Top application bar */
+.sg-topbar {
+    background: var(--st-background-color) !important;
+    border-color: var(--st-border-color) !important;
+}
+
+.sg-topbar-title,
+.sg-topbar-title *,
+.sg-topbar-path,
+.sg-topbar-path *,
+.sg-shortcut,
+.sg-shortcut * {
+    color: var(--st-text-color) !important;
+    -webkit-text-fill-color: var(--st-text-color) !important;
+    opacity: 1 !important;
+}
+
+.sg-shortcut {
+    background: var(--st-secondary-background-color) !important;
+    border-color: var(--st-border-color) !important;
+}
+
+/* Main page headings */
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3 {
+    color: var(--st-text-color) !important;
+    -webkit-text-fill-color: var(--st-text-color) !important;
+}
+
+/* AI overview and workspace intelligence */
+.sg-ai-callout-title,
+.sg-ai-callout-copy,
+.sg-insight-title,
+.sg-insight-value,
+.sg-insight-copy {
+    color: var(--st-text-color) !important;
+    -webkit-text-fill-color: var(--st-text-color) !important;
+}
+
+.sg-insight-copy,
+.sg-ai-callout-copy {
+    opacity: .72 !important;
+}
+
+/* Search and text inputs */
+[data-testid="stTextInput"] input {
+    background: var(--st-secondary-background-color) !important;
+    color: var(--st-text-color) !important;
+    -webkit-text-fill-color: var(--st-text-color) !important;
+    border-color: var(--st-border-color) !important;
+}
+
+[data-testid="stTextInput"] input::placeholder {
+    color: var(--st-text-color) !important;
+    -webkit-text-fill-color: var(--st-text-color) !important;
+    opacity: .55 !important;
+}
+
+/* Overview labels */
+.metric-title,
+.metric-label {
+    color: var(--st-text-color) !important;
+    -webkit-text-fill-color: var(--st-text-color) !important;
+    opacity: .72 !important;
+}
+
+/* Keep the live status intentionally green */
+.sg-live-pill,
+.sg-live-pill * {
+    color: #087f5b !important;
+    -webkit-text-fill-color: #087f5b !important;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# FINAL THEME INJECTION
+# ============================================================
+
+
+
+# ============================================================
+# FINAL THEME INJECTION
+# ============================================================
+
+inject_theme_css()
 
 
 # ============================================================
@@ -3003,11 +3409,6 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
-    st.markdown(
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
     with st.popover(
         "Account",
         use_container_width=True,
@@ -3015,16 +3416,6 @@ with st.sidebar:
 
         st.markdown(f"**{USER_NAME}**")
         st.caption(USER_ROLE)
-
-        account_dark = st.toggle(
-            "Dark mode",
-            value=st.session_state.get("app_theme", "light") == "dark",
-            key="account_dark_mode",
-        )
-        account_theme_value = "dark" if account_dark else "light"
-        if account_theme_value != st.session_state.get("app_theme"):
-            st.session_state["app_theme"] = account_theme_value
-            st.rerun()
 
         if st.button(
             "Settings",
@@ -3139,40 +3530,114 @@ if page_to_show == "Home":
     demo_mode = bool(
         st.session_state.get("demo_mode", False)
     )
+
+    if "full_analysis_status" not in st.session_state:
+        st.session_state["full_analysis_status"] = "idle"
+
+    if "full_analysis_index" not in st.session_state:
+        st.session_state["full_analysis_index"] = 0
+
+    if "full_analysis_counts" not in st.session_state:
+        st.session_state["full_analysis_counts"] = {
+            "OK": 0,
+            "MISMATCH": 0,
+            "NEEDS_REVIEW": 0,
+        }
+
+    if "full_analysis_failures" not in st.session_state:
+        st.session_state["full_analysis_failures"] = 0
+
+    if "full_analysis_results" not in st.session_state:
+        st.session_state["full_analysis_results"] = []
+
+    analysis_status = st.session_state.get(
+        "full_analysis_status",
+        "idle",
+    )
+
+    existing_summary = (
+        st.session_state.get("full_analysis_summary") or {}
+    )
+
+    existing_processed = int(
+        existing_summary.get(
+            "processed",
+            st.session_state.get("full_analysis_index", 0),
+        )
+    )
+
     run_full_analysis = False
+    cancel_analysis = False
+    continue_analysis = False
+    end_analysis = False
 
-    run_col, analysis_info_col = st.columns([1.5, 3.5])
+    if analysis_status == "paused" and not demo_mode:
+        continue_col, end_col, analysis_info_col = st.columns(
+            [1.3, 1.3, 3.4]
+        )
 
-    with run_col:
-        if demo_mode:
-            st.button(
-                "Full Analysis unavailable in Demo Mode",
-                disabled=True,
-                use_container_width=True,
-                key="run_full_analysis_demo",
-            )
-        else:
-            run_full_analysis = st.button(
-                f"Run Full Analysis — {analysis_total_hint} emails",
+        with continue_col:
+            continue_analysis = st.button(
+                "Continue Analysis",
                 type="primary",
                 use_container_width=True,
-                key="run_full_analysis",
+                key="continue_full_analysis",
             )
 
+        with end_col:
+            end_analysis = st.button(
+                "End Analysis",
+                use_container_width=True,
+                key="end_full_analysis",
+            )
+
+    else:
+        run_col, analysis_info_col = st.columns([1.5, 3.5])
+
+        with run_col:
+            if demo_mode:
+                st.button(
+                    "Full Analysis unavailable in Demo Mode",
+                    disabled=True,
+                    use_container_width=True,
+                    key="run_full_analysis_demo",
+                )
+
+            elif analysis_status == "running":
+                cancel_analysis = st.button(
+                    "Cancel Analysis",
+                    use_container_width=True,
+                    key="cancel_full_analysis",
+                )
+
+            else:
+                run_full_analysis = st.button(
+                    f"Run Full Analysis — {analysis_total_hint} emails",
+                    type="primary",
+                    use_container_width=True,
+                    key="run_full_analysis",
+                )
+
     with analysis_info_col:
-        existing_summary = (
-            st.session_state.get("full_analysis_summary") or {}
-        )
-
-        existing_processed = int(
-            existing_summary.get("processed", 0)
-        )
-
         if demo_mode:
             st.caption(
                 "Demo Mode: source inbox data is unavailable. "
                 "Built-in sample records are shown for interface demonstration."
             )
+
+        elif analysis_status == "running":
+            st.caption(
+                f"Analysis running · {existing_processed}/"
+                f"{analysis_total_hint} emails processed"
+            )
+
+        elif analysis_status == "paused":
+            st.caption(
+                f"Analysis paused at {existing_processed}/"
+                f"{analysis_total_hint}. Continue from this checkpoint "
+                "or end the analysis and reset."
+            )
+
         elif existing_processed:
             st.caption(
                 "Latest analysis: "
@@ -3183,44 +3648,182 @@ if page_to_show == "Home":
                 f"{existing_summary.get('needs_review', 0)} needs review · "
                 f"{existing_summary.get('failed', 0)} failed"
             )
+
         else:
             st.caption(
                 "Run the end-to-end pipeline across the complete inbox."
             )
 
     if run_full_analysis:
+        st.session_state["full_analysis_status"] = "running"
+        st.session_state["full_analysis_index"] = 0
+        st.session_state["full_analysis_counts"] = {
+            "OK": 0,
+            "MISMATCH": 0,
+            "NEEDS_REVIEW": 0,
+        }
+        st.session_state["full_analysis_failures"] = 0
+        st.session_state["full_analysis_results"] = []
+        st.session_state["full_analysis_summary"] = {
+            "processed": 0,
+            "total": analysis_total_hint,
+            "ok": 0,
+            "mismatch": 0,
+            "needs_review": 0,
+            "failed": 0,
+        }
+        st.rerun()
+
+    if cancel_analysis:
+        st.session_state["full_analysis_status"] = "paused"
+        st.rerun()
+
+    if continue_analysis:
+        st.session_state["full_analysis_status"] = "running"
+        st.rerun()
+
+    if end_analysis:
+        st.session_state["full_analysis_status"] = "idle"
+        st.session_state["full_analysis_index"] = 0
+        st.session_state["full_analysis_counts"] = {
+            "OK": 0,
+            "MISMATCH": 0,
+            "NEEDS_REVIEW": 0,
+        }
+        st.session_state["full_analysis_failures"] = 0
+        st.session_state["full_analysis_results"] = []
+        st.session_state["full_analysis_summary"] = {
+            "processed": 0,
+            "total": analysis_total_hint,
+            "ok": 0,
+            "mismatch": 0,
+            "needs_review": 0,
+            "failed": 0,
+        }
+        st.rerun()
+
+    analysis_status = st.session_state.get(
+        "full_analysis_status",
+        "idle",
+    )
+
+    if analysis_status in {"running", "paused"}:
+        current_processed = int(
+            st.session_state.get("full_analysis_index", 0)
+        )
+
+        current_counts = (
+            st.session_state.get("full_analysis_counts") or {}
+        )
+
+        current_failures = int(
+            st.session_state.get("full_analysis_failures", 0)
+        )
+
+        progress_percentage = (
+            int(current_processed / analysis_total_hint * 100)
+            if analysis_total_hint
+            else 0
+        )
+
+        progress_bar = st.progress(
+            min(progress_percentage, 100)
+        )
+
+        progress_text = st.empty()
+
+        if analysis_status == "paused":
+            progress_text.caption(
+                f"Paused at {current_processed}/"
+                f"{analysis_total_hint} emails"
+            )
+        else:
+            progress_text.caption(
+                f"Processing {current_processed}/"
+                f"{analysis_total_hint} emails"
+            )
+
+        metric_columns = st.columns(5)
+
+        processed_metric = metric_columns[0].empty()
+        ok_metric = metric_columns[1].empty()
+        mismatch_metric = metric_columns[2].empty()
+        review_metric = metric_columns[3].empty()
+        failed_metric = metric_columns[4].empty()
+
+        processed_metric.metric(
+            "Processed",
+            current_processed,
+        )
+        ok_metric.metric(
+            "OK",
+            int(current_counts.get("OK", 0)),
+        )
+        mismatch_metric.metric(
+            "Mismatch",
+            int(current_counts.get("MISMATCH", 0)),
+        )
+        review_metric.metric(
+            "Needs Review",
+            int(current_counts.get("NEEDS_REVIEW", 0)),
+        )
+        failed_metric.metric(
+            "Failed",
+            current_failures,
+        )
+
+    if analysis_status == "running":
         try:
             analysis_emails = list(load_inbox())
             analysis_total = len(analysis_emails)
 
-            progress_bar = st.progress(0)
-            progress_text = st.empty()
+            start_index = int(
+                st.session_state.get(
+                    "full_analysis_index",
+                    0,
+                )
+            )
 
-            metric_columns = st.columns(5)
-            processed_metric = metric_columns[0].empty()
-            ok_metric = metric_columns[1].empty()
-            mismatch_metric = metric_columns[2].empty()
-            review_metric = metric_columns[3].empty()
-            failed_metric = metric_columns[4].empty()
-
-            latest_progress = {
-                "processed": 0,
-                "total": analysis_total,
-                "counts": {
+            initial_counts = (
+                st.session_state.get(
+                    "full_analysis_counts"
+                )
+                or {
                     "OK": 0,
                     "MISMATCH": 0,
                     "NEEDS_REVIEW": 0,
-                },
-                "pipeline_failures": 0,
+                }
+            )
+
+            initial_failures = int(
+                st.session_state.get(
+                    "full_analysis_failures",
+                    0,
+                )
+            )
+
+            latest_progress = {
+                "processed": start_index,
+                "total": analysis_total,
+                "counts": initial_counts.copy(),
+                "pipeline_failures": initial_failures,
             }
 
             def update_analysis_progress(event):
                 latest_progress.update(event)
 
-                processed = int(event.get("processed", 0))
-                total = int(event.get("total", analysis_total))
+                processed = int(
+                    event.get("processed", start_index)
+                )
+
+                total = int(
+                    event.get("total", analysis_total)
+                )
+
                 counts = event.get("counts") or {}
-                failures = int(event.get("pipeline_failures", 0))
+                failures = int(
+                    event.get("pipeline_failures", 0)
+                )
 
                 percentage = (
                     int(processed / total * 100)
@@ -3257,55 +3860,104 @@ if page_to_show == "Home":
                     failures,
                 )
 
-            analysis_results = process_batch(
+            chunk_results = process_batch(
                 analysis_emails,
                 progress_callback=update_analysis_progress,
+                start_index=start_index,
+                batch_size=5,
+                initial_counts=initial_counts,
+                initial_failures=initial_failures,
             )
 
-            final_counts = latest_progress.get("counts") or {}
+            saved_results = list(
+                st.session_state.get(
+                    "full_analysis_results",
+                    []
+                )
+            )
+
+            saved_results.extend(chunk_results)
+
+            final_counts = (
+                latest_progress.get("counts") or {}
+            )
+
+            new_processed = int(
+                latest_progress.get(
+                    "processed",
+                    start_index,
+                )
+            )
+
+            new_failures = int(
+                latest_progress.get(
+                    "pipeline_failures",
+                    initial_failures,
+                )
+            )
 
             st.session_state["full_analysis_results"] = (
-                analysis_results
+                saved_results
+            )
+
+            st.session_state["full_analysis_index"] = (
+                new_processed
+            )
+
+            st.session_state["full_analysis_counts"] = {
+                "OK": int(final_counts.get("OK", 0)),
+                "MISMATCH": int(
+                    final_counts.get("MISMATCH", 0)
+                ),
+                "NEEDS_REVIEW": int(
+                    final_counts.get(
+                        "NEEDS_REVIEW",
+                        0,
+                    )
+                ),
+            }
+
+            st.session_state["full_analysis_failures"] = (
+                new_failures
             )
 
             st.session_state["full_analysis_summary"] = {
-                "processed": int(
-                    latest_progress.get(
-                        "processed",
-                        len(analysis_results),
-                    )
-                ),
+                "processed": new_processed,
                 "total": analysis_total,
                 "ok": int(final_counts.get("OK", 0)),
                 "mismatch": int(
                     final_counts.get("MISMATCH", 0)
                 ),
                 "needs_review": int(
-                    final_counts.get("NEEDS_REVIEW", 0)
-                ),
-                "failed": int(
-                    latest_progress.get(
-                        "pipeline_failures",
+                    final_counts.get(
+                        "NEEDS_REVIEW",
                         0,
                     )
                 ),
+                "failed": new_failures,
             }
 
-            progress_bar.progress(100)
-            progress_text.caption(
-                f"Completed {analysis_total}/{analysis_total} emails"
-            )
-
-            st.success(
-                "Full inbox analysis completed successfully."
-            )
+            if new_processed >= analysis_total:
+                st.session_state["full_analysis_status"] = (
+                    "complete"
+                )
+            else:
+                st.session_state["full_analysis_status"] = (
+                    "running"
+                )
 
             st.rerun()
 
         except Exception as exc:
+            st.session_state["full_analysis_status"] = "paused"
             st.error(
-                f"Full analysis failed: {exc}"
+                f"Full analysis paused because of an error: {exc}"
             )
+
+    if analysis_status == "complete":
+        st.success(
+            "Full inbox analysis completed successfully."
+        )
 
     total_records = len(df)
     analysis_summary = (
@@ -5395,27 +6047,6 @@ elif page_to_show == "Settings":
         st.rerun()
 
     st.write("")
-
-    st.markdown(
-        '<div class="panel">',
-        unsafe_allow_html=True,
-    )
-
-    current_dark = st.session_state.get("app_theme", "light") == "dark"
-
-    dark_mode = st.toggle(
-        "Dark mode",
-        value=current_dark,
-        key="setting_dark_mode",
-        help="Switch the entire ShipGuard interface between light and dark mode.",
-    )
-
-    new_theme = "dark" if dark_mode else "light"
-    if new_theme != st.session_state.get("app_theme"):
-        st.session_state["app_theme"] = new_theme
-        st.rerun()
-
-    st.caption("Theme applies to the entire application, including navigation, review panels, tables and controls.")
 
     email_notifications = st.toggle(
         "Email notifications",
