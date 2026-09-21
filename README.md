@@ -10,12 +10,12 @@ ShipGuard reads incoming emails, identifies their purpose, finds the relevant sh
 
 **It does not guess. When the system cannot prove an answer, it sends the case to human review.**
 
-![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python\&logoColor=white)
-![Streamlit](https://img.shields.io/badge/Streamlit-app-FF4B4B?logo=streamlit\&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-app-FF4B4B?logo=streamlit&logoColor=white)
 ![Dataset](https://img.shields.io/badge/Dataset-520%20emails-2ea44e)
 ![Pipeline](https://img.shields.io/badge/Pipeline%20failures-0-2ea44e)
 
-**[Live Demo](#-live-demo) · [Quick Start](#-run-locally) · [How It Works](#-how-it-works) · [Results](#-results) · [Team](#-team)**
+[Quick Start](#quick-start) · [How It Works](#how-it-works) · [Results](#results) · [Team](#team)
 
 </div>
 
@@ -316,6 +316,8 @@ This creates a traceable human-in-the-loop workflow instead of an uncontrolled m
 
 ---
 
+<a id="how-it-works"></a>
+
 # 🧭 How It Works
 
 ```mermaid
@@ -380,6 +382,254 @@ Escalate cases that cannot be safely decided.
 Run human corrections through the same verification engine.
 
 ---
+
+# 🏗️ Technical Architecture
+
+ShipGuard is organised as a layered processing pipeline.
+
+```text
+┌──────────────────────────────┐
+│          Streamlit UI        │
+│ Dashboard / Review / Reports │
+└──────────────┬───────────────┘
+               │
+               ▼
+┌──────────────────────────────┐
+│       Batch / Pipeline       │
+│ classify → route → process   │
+└──────────────┬───────────────┘
+               │
+       ┌───────┴────────┐
+       ▼                ▼
+┌─────────────┐   ┌───────────────┐
+│ Classifier  │   │ Attachment    │
+│ Rules + AI  │   │ Router        │
+└─────────────┘   └───────┬───────┘
+                          │
+                          ▼
+                 ┌─────────────────┐
+                 │ Document Reader │
+                 │ TXT/PDF/OCR/    │
+                 │ DOCX/XLSX       │
+                 └────────┬────────┘
+                          │
+                          ▼
+                 ┌─────────────────┐
+                 │ Field Extractor │
+                 │ + Candidates    │
+                 │ + Evidence      │
+                 └────────┬────────┘
+                          │
+                          ▼
+                 ┌─────────────────┐
+                 │ Normalisation   │
+                 │ + Quality Check │
+                 └────────┬────────┘
+                          │
+                          ▼
+                 ┌─────────────────┐
+                 │ Verification    │
+                 │ SI → BL         │
+                 └────────┬────────┘
+                          │
+              ┌───────────┼───────────┐
+              ▼           ▼           ▼
+             OK       MISMATCH   NEEDS_REVIEW
+                                      │
+                                      ▼
+                              Human Correction
+                                      │
+                                      ▼
+                                  Re-verify
+```
+
+### Core Architectural Principles
+
+**1. Single Source of Truth**
+
+`modules/schema.py` defines the seven verification fields and their aliases.
+
+**2. Separation of Responsibilities**
+
+Classification, document reading, extraction, normalisation, evidence generation and verification are separated into different modules.
+
+**3. Evidence Before Verdict**
+
+Extraction produces provenance and evidence alongside the value.
+
+**4. Deterministic Verification**
+
+The final BL-versus-SI comparison is performed by the verification engine rather than by an LLM.
+
+**5. Human-in-the-Loop**
+
+Uncertain cases are explicitly represented as `NEEDS_REVIEW`.
+
+**6. Reproducible Corrections**
+
+Human corrections are passed through the same verification logic as automatic results.
+
+---
+
+# 🔧 Implementation Details
+
+### Email Classification
+
+The classifier uses weighted rules based on:
+
+* subject
+* email body
+* attachment names
+* class-specific keywords
+
+Quoted email history is handled separately so that old messages do not unnecessarily influence the current classification.
+
+The hybrid classifier uses rules first and calls Gemini only when the rule result is insufficiently confident.
+
+### Attachment Routing
+
+For `BL_COMPARISON` emails, the attachment router identifies likely SI and BL documents using:
+
+* filename patterns
+* document type
+* content clues
+* available document metadata
+
+If the required document cannot be identified safely, the case is routed to review.
+
+### Document Reading
+
+The document reader provides a common text representation for multiple formats:
+
+* TXT
+* PDF
+* Scanned PDF → OCR
+* DOCX
+* XLSX
+
+Each reader preserves source information where possible so that extracted values can later be connected to their original location.
+
+### Candidate Extraction
+
+Rather than taking the first matching number or label, the field extractor generates candidates.
+
+Candidates are evaluated using factors such as:
+
+* label similarity
+* location in the document
+* value format
+* plausibility
+* units
+* OCR risk
+
+The candidate engine ranks the available evidence before a value is accepted.
+
+### Independent Quality Validation
+
+The quality layer checks extracted values independently.
+
+Examples include:
+
+* gross-weight plausibility
+* gross/net/tare relationships
+* container-to-weight sanity
+* valid container counts
+* valid units
+* suspicious OCR values
+
+This reduces the risk of an extractor simply accepting its own incorrect output.
+
+### Verification Engine
+
+The verification engine receives structured SI and BL values.
+
+It applies canonical mapping and conservative normalisation before comparing the values.
+
+The output is one of:
+
+```text
+OK
+MISMATCH
+NEEDS_REVIEW
+```
+
+The verification result also contains structured information such as:
+
+```text
+status
+has_defect
+defect_fields
+discrepancies
+review_reason
+```
+
+### Human Correction
+
+Human corrections are applied only to the BL-side values.
+
+The corrected values are passed back into:
+
+```text
+verify()
+```
+
+This means the human reviewer does not directly decide whether a case is `OK`.
+
+---
+
+# 🤖 AI Integration
+
+AI is deliberately used as a **fallback rather than the final authority**.
+
+### Gemini Classification
+
+Gemini is used for uncertain email classification.
+
+```text
+Rules
+  ↓
+High confidence → accept
+
+Medium / Low confidence
+  ↓
+Gemini fallback
+  ↓
+Confident → classification
+Uncertain / error → human review
+```
+
+The classification layer expects a structured response rather than free-form text.
+
+If Gemini is unavailable or returns an unusable response, ShipGuard does not invent a class.
+
+### Optional AI Document Extraction
+
+An optional AI extraction layer can assist with:
+
+* unfamiliar document labels
+* unusual layouts
+* difficult scanned documents
+
+AI-extracted values still have to pass the evidence and validation pipeline.
+
+The AI layer is not allowed to silently invent values that are not supported by the document.
+
+### AI Safety Principles
+
+ShipGuard follows several restrictions:
+
+* AI is not the source of truth.
+* The SI remains the reference document.
+* AI cannot override the verification engine.
+* Unsupported values are not accepted as facts.
+* Low-confidence or ambiguous results can be escalated.
+* Human corrections are re-verified deterministically.
+
+This makes AI an **assisting component rather than the decision-maker**.
+
+---
+
+<a id="results"></a>
 
 # 📊 Results
 
@@ -471,97 +721,83 @@ The submission builder also converts internal results into the organiser's requi
 
 ---
 
-# 🎬 Try It in 2 Minutes
+# 🎬 Demo Guide
 
-### 1. Open the Live Demo
-
-Go to the **Live Demo** below.
-
-### 2. Run the analysis
-
-On **Home**, click:
-
-**Run Full Analysis**
-
-Alternatively, use:
+For the clearest demonstration:
 
 ```text
-?backup=1
+Home
+  ↓
+Run Full Analysis
+  ↓
+Document Checks
+  ↓
+Open a MISMATCH
+  ↓
+Evidence Grounding
+  ↓
+Open a NEEDS_REVIEW case
+  ↓
+Human Correction
+  ↓
+Apply and Re-verify
+  ↓
+Audit Trail
 ```
 
-to load the saved demonstration results immediately.
+The demonstration should highlight three main ideas:
 
-### 3. Inspect a mismatch
+1. **The SI is the source of truth.**
+2. **Every important result has evidence.**
+3. **Uncertainty is escalated instead of guessed.**
 
-Go to:
+### 🎥 Demo Video
 
-**Document Checks → MISMATCH**
-
-Look at:
-
-* Difference
-* Defect fields
-* Evidence Grounding
-* SI reference
-* BL value
-
-### 4. Test Human Review
-
-Open a `NEEDS_REVIEW` case.
-
-Enter a corrected BL value and click:
-
-**Apply and Re-verify**
-
-### 5. Inspect the audit trail
-
-Check the recorded:
-
-```text
-before → after
-reviewer
-note
-timestamp
-result
-```
-
-### 6. Export the report
-
-Open the Reports page and download the discrepancy report.
+**[PASTE DEMO VIDEO URL HERE]**
 
 ---
 
-# 🛠️ Run Locally
+<a id="quick-start"></a>
 
-## Requirements
+# 🛠️ Setup Instructions
+
+### Requirements
 
 * Python **3.11+**
 * Tesseract OCR is optional for scanned PDFs.
 
 The project was developed and tested with Python 3.13.
 
-## Installation
+### Installation
+
+Clone the repository:
 
 ```bash
 git clone https://github.com/kelvinyap927/shipguard-ai.git
 cd shipguard-ai
+```
 
+Create a virtual environment:
+
+```bash
 python -m venv .venv
 ```
 
-### Windows
+Activate it:
+
+**Windows**
 
 ```bash
 .venv\Scripts\activate
 ```
 
-### macOS / Linux
+**macOS / Linux**
 
 ```bash
 source .venv/bin/activate
 ```
 
-Then install dependencies:
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
@@ -592,7 +828,7 @@ ShipGuard can run without external AI APIs.
 Set:
 
 ```text
-GEMINI_API_KEY
+GEMINI_API_KEY=<your-key>
 ```
 
 in `.env` to enable the LLM fallback for uncertain email classification.
@@ -629,6 +865,8 @@ For macOS:
 ```bash
 brew install tesseract
 ```
+
+For Windows, install Tesseract and ensure its executable is available to the system `PATH`.
 
 Without Tesseract, unsupported scans can be routed to:
 
@@ -682,6 +920,114 @@ python C.test_member_c.py
 ```
 
 The stress tests include multiple label and formatting variations to check that normalisation does not turn genuine differences into false matches.
+
+---
+
+# 🧩 Challenges Faced
+
+Several technical challenges shaped the final design.
+
+### 1. Documents use inconsistent labels
+
+The same field can appear under different labels.
+
+For example:
+
+```text
+Port of Loading
+POL
+Load Port
+Loading Port
+```
+
+The schema and label-alias system were therefore designed to map different labels to the same canonical field.
+
+### 2. Formatting differences can look like real defects
+
+Shipping documents can represent the same value in different ways:
+
+```text
+22,000 KG
+22 MT
+22 tonnes
+```
+
+Normalisation was required before comparison while still avoiding overly aggressive fuzzy matching.
+
+### 3. OCR can introduce incorrect values
+
+Scanned documents can produce characters and numbers that look valid but are incorrect.
+
+The system therefore treats OCR-derived values more conservatively and can escalate them to human review.
+
+### 4. Missing information is different from a mismatch
+
+A blank BL field does not prove that the BL is wrong.
+
+This led to the explicit distinction between `MISMATCH` and `NEEDS_REVIEW`.
+
+### 5. AI services can fail
+
+External APIs can be unavailable, rate-limited or return unusable responses.
+
+The pipeline therefore has deterministic fallbacks and routes unresolved cases to human review instead of stopping the entire analysis.
+
+### 6. Human corrections must remain trustworthy
+
+Allowing reviewers to directly change a verdict could bypass the verification logic.
+
+Instead, corrections are passed through the same `verify()` function and recorded in an audit trail.
+
+### 7. Processing a full inbox must be fault tolerant
+
+A single problematic email should not terminate a 520-email analysis.
+
+The batch processor therefore isolates failures, records them and continues processing the remaining inbox.
+
+---
+
+# 🔭 Future Roadmap
+
+Potential future improvements include:
+
+### Live Mailbox Integration
+
+Connect ShipGuard directly to an operational email inbox instead of a bundled dataset.
+
+### Automatic Missing-Document Requests
+
+Automatically prepare a response requesting a missing SI or BL.
+
+### Additional Shipping Fields
+
+Expand beyond the current seven fields to support fields such as:
+
+* vessel
+* voyage
+* net weight
+* commodity
+* package count
+* container type
+
+### Reviewer Learning
+
+Use validated reviewer corrections to improve aliases and extraction rules while keeping the final verification logic controlled.
+
+### Production Deployment
+
+Add:
+
+* authentication
+* persistent database storage
+* role-based reviewer access
+* enterprise mailbox integration
+* monitoring and logging
+
+### Broader Document Support
+
+Improve support for more complex layouts, image-heavy documents and additional document formats.
+
+The current architecture is designed so these improvements can be added without replacing the core verification workflow.
 
 ---
 
@@ -813,19 +1159,7 @@ The architecture is intentionally **rules-first**. AI is used only where it adds
 
 ---
 
-# 🔭 Limitations and Next Steps
-
-ShipGuard is designed to be conservative, but several areas could be expanded:
-
-* **Live mailbox integration** — connect directly to an operational email inbox.
-* **Automatic missing-document requests** — generate a request when an SI or BL is missing.
-* **Additional shipping fields** — such as vessel, voyage, net weight or commodity.
-* **Reviewer learning** — use validated corrections to improve aliases and extraction rules.
-* **Production deployment** — add authentication, persistent storage and enterprise mailbox integration.
-
-The current system deliberately prioritises traceability and safe escalation over aggressive automation.
-
----
+<a id="team"></a>
 
 # 👥 Team Contribution
 
@@ -862,11 +1196,9 @@ GitHub: [@kelvinyap927](https://github.com/kelvinyap927)
 * Extraction quality reporting
 * Extraction and stress tests
 * UI/navigation contributions
-* Readme file
+* README documentation
 
 ### Kai — Verification, Normalisation & Reliability
-
-GitHub: [@Kai0822-hub](https://github.com/Kai0822-hub)
 
 * Verification engine
 * Canonical field mapping
@@ -878,6 +1210,8 @@ GitHub: [@Kai0822-hub](https://github.com/Kai0822-hub)
 * Submission-record generation
 * Adversarial and regression tests
 * Dataset validation
+
+GitHub: [@Kai0822-hub](https://github.com/Kai0822-hub)
 
 ### Xin Rou — Presentation & Demo
 
@@ -892,44 +1226,6 @@ GitHub: [@Kai0822-hub](https://github.com/Kai0822-hub)
 * Judge-facing feature walkthrough
 * Presentation rehearsal and coordination
 * Overall visual and communication polish
-
----
-
-### 🎥 Demo Video
-
-**[PASTE DEMO VIDEO URL HERE]**
-
-### Recommended Judge Flow
-
-For the fastest demonstration:
-
-```text
-Home
-  ↓
-Run Full Analysis
-  ↓
-Document Checks
-  ↓
-Open a MISMATCH
-  ↓
-Evidence Grounding
-  ↓
-Open a NEEDS_REVIEW case
-  ↓
-Human Correction
-  ↓
-Apply and Re-verify
-  ↓
-Audit Trail
-```
-
-If the live deployment already contains the saved demonstration state, append:
-
-```text
-?backup=1
-```
-
-to load the pre-computed results immediately.
 
 ---
 
@@ -948,9 +1244,11 @@ __pycache__/
 out/
 ```
 
-These are already covered by `.gitignore`.
+These are covered by `.gitignore`.
 
-API keys must never be committed. Use `.env` locally for optional API configuration.
+**API keys must never be committed.**
+
+Use `.env` locally for optional API configuration.
 
 ---
 
