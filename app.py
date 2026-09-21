@@ -2511,10 +2511,12 @@ def go_to(
 df = st.session_state["df"]
 comparison_df = st.session_state["comparison_df"]
 
-fresh_demo = (
-    str(st.query_params.get("fresh", "")).lower()
+backup_demo = (
+    str(st.query_params.get("backup", "")).lower()
     in {"1", "true", "yes"}
 )
+
+fresh_demo = not backup_demo
 
 if fresh_demo:
     if not st.session_state.get(
@@ -3692,6 +3694,18 @@ if page_to_show == "Home":
                     "Cancel Analysis",
                     use_container_width=True,
                     key="cancel_full_analysis",
+                )
+
+            elif (
+                not fresh_demo
+                and analysis_status == "complete"
+                and existing_processed >= analysis_total_hint
+            ):
+                st.button(
+                    f"Analysis Complete — {existing_processed}/{analysis_total_hint}",
+                    disabled=True,
+                    use_container_width=True,
+                    key="analysis_complete_snapshot",
                 )
 
             else:
