@@ -895,10 +895,6 @@ GitHub: [@Kai0822-hub](https://github.com/Kai0822-hub)
 
 ---
 
-# 🌐 Live Demo
-
-## 👉 **[PASTE LIVE DEMO URL HERE]**
-
 ### 🎥 Demo Video
 
 **[PASTE DEMO VIDEO URL HERE]**
