@@ -637,7 +637,7 @@ The bundled reference run contains **520 emails**.
 
 | Result            |   Count |
 | ----------------- | ------: |
-| `OK`              | **298** |
+| `OK`       | **298** |
 | `MISMATCH`        |  **40** |
 | `NEEDS_REVIEW`    | **182** |
 | Pipeline failures |   **0** |
@@ -1159,6 +1159,12 @@ The architecture is intentionally **rules-first**. AI is used only where it adds
 
 ---
 
+### Cloud Deployment
+
+ShipGuard AI is deployed on Streamlit Community Cloud, providing judges with a publicly accessible live prototype.
+
+*Live App:* https://shipguard-ai.streamlit.app/
+
 <a id="team"></a>
 
 # 👥 Team Contribution
@@ -1221,7 +1227,7 @@ GitHub: [@Kai0822-hub](https://github.com/Kai0822-hub)
 * Demo narration and voice-over preparation
 * Demo video editing and feature selection
 * Demo flow and walkthrough planning
-* Presentation slide preparation and editing
+* Demo presentation preparation and coordination
 * Live demonstration preparation
 * Judge-facing feature walkthrough
 * Presentation rehearsal and coordination
