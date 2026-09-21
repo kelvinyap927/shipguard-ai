@@ -11,6 +11,10 @@ from modules.result_aggregator import aggregate_result
 from modules.verification_adapter import build_verification_payload
 from member_c_verifier import apply_human_correction
 from theme import inject_theme_css
+from wow_features import inject_wow_css, status_badge_html, confidence_bar_html, render_processing_log
+from export_report import render_export_button
+from discrepancy_intelligence import render_discrepancy_intelligence
+from demo_snapshot import restore_demo_snapshot, save_demo_snapshot
 
 # ============================================================
 # PAGE CONFIGURATION
@@ -31,17 +35,27 @@ st.set_page_config(
 # leading whitespace only for unsafe HTML blocks, so cards and badges render
 # consistently without changing normal Markdown behaviour.
 # ------------------------------------------------------------
-if not hasattr(st, "_shipguard_original_markdown"):
-    st._shipguard_original_markdown = st.markdown
+_original_markdown = st._main.markdown
 
 
 def _dedented_markdown(body="", *args, **kwargs):
     if kwargs.get("unsafe_allow_html") and isinstance(body, str):
-        body = "\n".join(line.lstrip() for line in body.split("\n"))
-    return st._shipguard_original_markdown(body, *args, **kwargs)
+        body = "\n".join(
+            line.lstrip()
+            for line in body.split("\n")
+        )
+
+    return _original_markdown(
+        body,
+        *args,
+        **kwargs,
+    )
 
 
 st.markdown = _dedented_markdown
+
+
+inject_wow_css()
 
 
 # ============================================================
@@ -218,6 +232,33 @@ section[data-testid="stSidebar"] div[role="radiogroup"] > label[data-checked="tr
     padding: 8px;
     border-radius: 10px;
     background: rgba(255,255,255,.055);
+}
+
+/* Keep the account controls visible during long dashboard views. */
+section[data-testid="stSidebar"] > div {
+    padding-bottom: 150px !important;
+}
+
+.st-key-sidebar_account_footer {
+    position: fixed !important;
+    left: 12px;
+    bottom: 12px;
+    width: 292px;
+    z-index: 1000;
+    padding: 10px 10px 7px;
+    border: 1px solid rgba(255,255,255,.10);
+    border-radius: 14px;
+    background: linear-gradient(
+        180deg,
+        rgba(13, 42, 69, .98),
+        rgba(8, 29, 51, .99)
+    );
+    box-shadow: 0 -8px 28px rgba(0,0,0,.18);
+    backdrop-filter: blur(12px);
+}
+
+.st-key-sidebar_account_footer [data-testid="stPopover"] {
+    margin-top: 3px;
 }
 
 .sidebar-avatar {
@@ -2434,29 +2475,24 @@ if st.session_state["_pending_nav"]:
             st.session_state[_key] = _pending[_key]
 
 
+
 def go_to(
     main_nav=None,
-    insights_nav=None,
-    system_nav=None,
+    insights_nav="__unset__",
+    system_nav="__unset__",
     page_override="__unset__",
     case_view=None,
     selected_record_id="__unset__",
 ):
-    """Queue a navigation change and rerun the application.
-
-    Radio navigation keys must be updated before their widgets are created.
-    The pending-navigation queue keeps button-driven navigation safe.
-    """
-
     pending = {}
 
     if main_nav is not None:
         pending["main_nav"] = main_nav
 
-    if insights_nav is not None:
+    if insights_nav != "__unset__":
         pending["insights_nav"] = insights_nav
 
-    if system_nav is not None:
+    if system_nav != "__unset__":
         pending["system_nav"] = system_nav
 
     if page_override != "__unset__":
@@ -2474,6 +2510,56 @@ def go_to(
 
 df = st.session_state["df"]
 comparison_df = st.session_state["comparison_df"]
+
+fresh_demo = (
+    str(st.query_params.get("fresh", "")).lower()
+    in {"1", "true", "yes"}
+)
+
+if fresh_demo:
+    if not st.session_state.get(
+        "_fresh_demo_initialized",
+        False,
+    ):
+        st.session_state["full_analysis_status"] = "idle"
+        st.session_state["full_analysis_index"] = 0
+        st.session_state["full_analysis_counts"] = {
+            "OK": 0,
+            "MISMATCH": 0,
+            "NEEDS_REVIEW": 0,
+        }
+        st.session_state["full_analysis_failures"] = 0
+        st.session_state["full_analysis_results"] = []
+        st.session_state["full_analysis_summary"] = {}
+        st.session_state["_fresh_demo_initialized"] = True
+else:
+    st.session_state.pop(
+        "_fresh_demo_initialized",
+        None,
+    )
+
+    restore_demo_snapshot(len(df))
+
+snapshot_results = (
+    st.session_state.get("full_analysis_results")
+    or []
+)
+
+snapshot_summary = (
+    st.session_state.get("full_analysis_summary")
+    or {}
+)
+
+if (
+    not fresh_demo
+    and len(snapshot_results) == len(df)
+    and snapshot_summary
+):
+    save_demo_snapshot(
+        results=snapshot_results,
+        summary=snapshot_summary,
+        total_records=len(df),
+    )
 
 
 # ============================================================
@@ -3009,8 +3095,8 @@ def render_filtered_records(
             unsafe_allow_html=True,
         )
 
-        c1, c2, c3, c4 = st.columns(
-            [1.15, 3.1, 1.15, .8]
+        c1, c2, c3, c4, c5 = st.columns(
+            [1.05, 2.75, 1.0, 1.25, .7]
         )
 
         with c1:
@@ -3052,6 +3138,15 @@ def render_filtered_records(
             )
 
         with c4:
+
+            st.markdown(
+                confidence_bar_html(
+                    row.get("Confidence", "LOW")
+                ),
+                unsafe_allow_html=True,
+            )
+
+        with c5:
 
             if st.button(
                 "View",
@@ -3337,115 +3432,104 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    refresh_col, version_col = st.columns([1.6, 1])
-    with refresh_col:
-        if st.button("Refresh data", use_container_width=True, key="sidebar_refresh"):
-            # Refresh is deliberately fail-safe: if the backend is unavailable,
-            # keep the current dataset and return the user to the working screen.
-            try:
-                refreshed_df = ensure_record_schema(load_backend_records())
-                refreshed_comparison = load_backend_comparison()
-                if refreshed_df is None or refreshed_df.empty:
-                    refreshed_df = ensure_record_schema(pd.DataFrame(DEFAULT_CASES))
-                if refreshed_comparison is None or refreshed_comparison.empty:
-                    refreshed_comparison = load_backend_comparison()
+    with st.container(key="sidebar_account_footer"):
 
-                st.session_state["df"] = refreshed_df
-                st.session_state["comparison_df"] = refreshed_comparison
-                st.session_state["activity_log"] = []
-                st.session_state["refresh_message"] = "Workspace data refreshed."
-            except Exception:
-                # Never expose a traceback to the demo user.
-                # Restore the last known-good dataset and continue normally.
-                st.session_state["df"] = ensure_record_schema(
-                    st.session_state.get("df", pd.DataFrame(DEFAULT_CASES))
-                )
-                st.session_state["comparison_df"] = st.session_state.get(
-                    "comparison_df", load_backend_comparison()
-                )
-                st.session_state["refresh_message"] = (
-                    "Live data is unavailable. Showing the latest available workspace data."
-                )
-            st.rerun()
-    with version_col:
-        st.markdown(
-            f'<div class="sidebar-subtle" style="text-align:right;padding-top:9px;font-size:10px;">v{APP_VERSION}</div>',
-            unsafe_allow_html=True,
-        )
+        user_col1, user_col2 = st.columns([1, 3])
 
-    if st.session_state.pop("refresh_message", None):
-        st.toast("Workspace refreshed safely.", icon="✓")
+        with user_col1:
 
-    st.markdown(
-        '<div class="sidebar-user-box">',
-        unsafe_allow_html=True,
-    )
-
-    user_col1, user_col2 = st.columns([1, 3])
-
-    with user_col1:
-
-        st.markdown(
-            f"""
-            <div class="sidebar-avatar">
-                {safe_text(USER_INITIALS)}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with user_col2:
-
-        st.markdown(
-            f"""
-            <div class="sidebar-user-name">
-                {safe_text(USER_NAME)}
-            </div>
-
-            <div class="sidebar-user-role">
-                {safe_text(USER_ROLE)}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with st.popover(
-        "Account",
-        use_container_width=True,
-    ):
-
-        st.markdown(f"**{USER_NAME}**")
-        st.caption(USER_ROLE)
-
-        if st.button(
-            "Settings",
-            use_container_width=True,
-            key="account_settings",
-        ):
-
-            go_to(
-                main_nav="Home",
-                insights_nav=None,
-                system_nav=None,
-                page_override="Settings",
-                case_view=False,
-                selected_record_id=None,
+            st.markdown(
+                f"""
+                <div class="sidebar-avatar">
+                    {safe_text(USER_INITIALS)}
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
-        if st.button(
-            "Log out",
+        with user_col2:
+
+            st.markdown(
+                f"""
+                <div class="sidebar-user-name">
+                    {safe_text(USER_NAME)}
+                </div>
+
+                <div class="sidebar-user-role">
+                    {safe_text(USER_ROLE)}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with st.popover(
+            "Account",
             use_container_width=True,
-            key="account_logout",
         ):
 
-            st.session_state["logged_out"] = True
-            st.session_state["case_view"] = False
-            st.session_state["selected_record_id"] = None
-            st.rerun()
+            st.markdown(f"**{USER_NAME}**")
+            st.caption(USER_ROLE)
+
+            if st.button(
+                "Settings",
+                use_container_width=True,
+                key="account_settings",
+            ):
+
+                go_to(
+                    main_nav="Home",
+                    insights_nav=None,
+                    system_nav=None,
+                    page_override="Settings",
+                    case_view=False,
+                    selected_record_id=None,
+                )
+
+            if st.button(
+                "Log out",
+                use_container_width=True,
+                key="account_logout",
+            ):
+
+                st.session_state["logged_out"] = True
+                st.session_state["case_view"] = False
+                st.session_state["selected_record_id"] = None
+                st.rerun()
+
+        st.markdown(
+            f'<div class="sidebar-subtle" style="text-align:right;font-size:9px;">v{APP_VERSION}</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def render_global_topbar(page_name):
     """Render a compact product-style utility bar above page content."""
+    analysis_status = st.session_state.get(
+        "full_analysis_status",
+        "idle",
+    )
+
+    analysis_summary = (
+        st.session_state.get("full_analysis_summary") or {}
+    )
+
+    processed = int(
+        st.session_state.get(
+            "full_analysis_index",
+            analysis_summary.get("processed", 0),
+        )
+        or 0
+    )
+
+    total = len(st.session_state.get("df", []))
+
+    status_html = status_badge_html(
+        status=analysis_status,
+        processed=processed,
+        total=total,
+        summary=analysis_summary,
+    )
+
     st.markdown(
         f"""
         <div class="sg-topbar">
@@ -3458,7 +3542,7 @@ def render_global_topbar(page_name):
             </div>
             <div class="sg-topbar-right">
                 <div class="sg-shortcut">AI-assisted review</div>
-                <div class="sg-live-pill"><span class="sg-live-dot"></span>System operational</div>
+                {status_html}
             </div>
         </div>
         """,
@@ -3746,7 +3830,7 @@ if page_to_show == "Home":
         metric_columns = st.columns(5)
 
         processed_metric = metric_columns[0].empty()
-        ok_metric = metric_columns[1].empty()
+        clear_metric = metric_columns[1].empty()
         mismatch_metric = metric_columns[2].empty()
         review_metric = metric_columns[3].empty()
         failed_metric = metric_columns[4].empty()
@@ -3755,8 +3839,8 @@ if page_to_show == "Home":
             "Processed",
             current_processed,
         )
-        ok_metric.metric(
-            "OK",
+        clear_metric.metric(
+            "No Issues",
             int(current_counts.get("OK", 0)),
         )
         mismatch_metric.metric(
@@ -3842,10 +3926,6 @@ if page_to_show == "Home":
                 processed_metric.metric(
                     "Processed",
                     processed,
-                )
-                ok_metric.metric(
-                    "OK",
-                    int(counts.get("OK", 0)),
                 )
                 mismatch_metric.metric(
                     "Mismatch",
@@ -3987,13 +4067,20 @@ if page_to_show == "Home":
         if total_records else 0
     )
 
+    system_status_html = status_badge_html(
+        status=st.session_state.get("full_analysis_status", "idle"),
+        processed=processed_count,
+        total=total_records,
+        summary=analysis_summary,
+    )
+
     st.markdown(
         f"""
         <div class="command-strip">
             <div class="command-chip">
                 <div class="command-chip-label">System status</div>
                 <div class="command-chip-value">
-                    <span class="health-dot"></span>{APP_STATUS}
+                    {system_status_html}
                 </div>
             </div>
             <div class="command-chip">
@@ -4210,7 +4297,7 @@ if page_to_show == "Home":
             <div style="
                 display:grid;
                 grid-template-columns:
-                1.05fr 2.9fr 1.25fr .9fr .95fr .8fr;
+                1fr 2.55fr 1.1fr .8fr .8fr 1.1fr .7fr;
                 gap:12px;
             ">
                 <div>Type</div>
@@ -4218,6 +4305,7 @@ if page_to_show == "Home":
                 <div>Shipment</div>
                 <div>Priority</div>
                 <div>Received</div>
+                <div>Confidence</div>
                 <div>Action</div>
             </div>
         </div>
@@ -4248,7 +4336,7 @@ if page_to_show == "Home":
         for index, row in filtered_df.iterrows():
 
             row_cols = st.columns(
-                [1.05, 2.9, 1.25, .9, .95, .8]
+                [1.0, 2.55, 1.1, .8, .8, 1.1, .7]
             )
 
             with row_cols[0]:
@@ -4264,9 +4352,6 @@ if page_to_show == "Home":
                     f"""
                     <div class="subject-text">
                         {safe_text(row["Subject"])}
-                    </div>
-                    <div style="margin-top:5px;">
-                        {confidence_badge(row.get("Confidence", "LOW"))}
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -4303,11 +4388,19 @@ if page_to_show == "Home":
 
             with row_cols[5]:
 
+                st.markdown(
+                    confidence_bar_html(
+                        row.get("Confidence", "LOW")
+                    ),
+                    unsafe_allow_html=True,
+                )
+
+            with row_cols[6]:
+
                 if st.button(
                     "View",
                     key=f"home_view_{row['ID']}_{index}",
-                    use_container_width=False
-                    ,
+                    use_container_width=False,
                 ):
 
                     open_record(row.to_dict())
@@ -4326,44 +4419,112 @@ elif page_to_show == "Analytics":
         "Operational overview and document activity.",
     )
 
+    if st.button(
+        "← Back to Home",
+        key="analytics_back_home",
+    ):
+        go_to(
+            main_nav="Home",
+            insights_nav=None,
+            system_nav=None,
+            page_override=None,
+            case_view=False,
+            selected_record_id=None,
+        )
+
+    st.write("")
+
+    render_discrepancy_intelligence(
+        df=st.session_state["df"],
+        full_results=(
+            st.session_state.get(
+                "full_analysis_results"
+            )
+            or []
+        ),
+        total_records=len(
+            st.session_state["df"]
+        ),
+    )
+
+    st.write("")
+
     total_emails = len(df)
 
-    action_required = int(
-        (df["Status"] == "Under Review").sum()
+    analysis_summary = (
+        st.session_state.get("full_analysis_summary") or {}
     )
 
-    open_document_checks = int(
-        (
-            (df["Type"] == "Document Check")
-            &
-            (df["Status"] == "Under Review")
-        ).sum()
+    analysis_results = (
+        st.session_state.get("full_analysis_results")
+        or []
     )
 
-    completed_records = int(
-        (df["Status"] == "Done").sum()
+    mismatch_count = int(
+        analysis_summary.get("mismatch", 0)
+    )
+
+    review_count = int(
+        analysis_summary.get("needs_review", 0)
+    )
+
+    failed_count = int(
+        analysis_summary.get("failed", 0)
+    )
+
+    no_issue_count = int(
+        analysis_summary.get("ok", 0)
+    )
+
+    action_required = (
+        mismatch_count
+        + review_count
+        + failed_count
+    )
+
+    record_types = {
+        str(row["ID"]): row["Type"]
+        for _, row in df.iterrows()
+    }
+
+    open_document_checks = sum(
+        1
+        for result in analysis_results
+        if (
+            record_types.get(
+                str(result.get("email_id"))
+            ) == "Document Check"
+            and str(
+                result.get("status") or ""
+            ).lower()
+            in {
+                "mismatch",
+                "human_review",
+                "failed",
+            }
+        )
     )
 
     a, b, c, d = st.columns(4)
 
     a.metric(
-        "Total records",
+        "Total Records",
         total_emails,
     )
 
     b.metric(
-        "Action required",
+        "Action Required",
         action_required,
     )
 
     c.metric(
-        "Open document checks",
+        "Open Document Checks",
         open_document_checks,
     )
 
     d.metric(
-        "Completed",
-        completed_records,
+        "No Issues",
+        no_issue_count,
     )
 
     st.write("")
@@ -4764,6 +4925,24 @@ elif page_to_show == "Document Checks":
 
     st.write("")
 
+    render_export_button(
+        df=st.session_state["df"],
+        full_results=(
+            st.session_state.get(
+                "full_analysis_results"
+            )
+            or []
+        ),
+        pipeline_results=(
+            st.session_state.get(
+                "pipeline_results",
+                {},
+            )
+        ),
+    )
+
+    st.write("")
+
     render_filtered_records(
         document_checks_df,
         "No document checks found.",
@@ -5017,6 +5196,36 @@ elif page_to_show == "Document Check Case":
                         "No discrepancies detected in the "
                         "current comparison data."
                     )
+
+            processing_result = None
+
+            for analysis_result in (
+                st.session_state.get(
+                    "full_analysis_results"
+                )
+                or []
+            ):
+                if str(
+                    analysis_result.get("email_id")
+                ) == str(record.get("ID")):
+                    processing_result = analysis_result
+                    break
+
+            if processing_result is None:
+                processing_result = (
+                    st.session_state.get(
+                        "pipeline_results",
+                        {},
+                    ).get(record.get("ID"))
+                )
+
+            render_processing_log(
+                processing_result,
+                record.get("ID"),
+            )
+
+            st.write("")
+
 
             with tab2:
 
@@ -6259,3 +6468,53 @@ else:
     st.session_state["insights_nav"] = None
     st.session_state["system_nav"] = None
     st.rerun()
+
+st.markdown(
+    """
+    <style>
+    .st-key-sidebar_account_footer .sidebar-avatar,
+    .st-key-sidebar_account_footer .sidebar-avatar * {
+        color: #0f2942 !important;
+        -webkit-text-fill-color: #0f2942 !important;
+        opacity: 1 !important;
+        font-weight: 800 !important;
+    }
+
+    .st-key-sidebar_account_footer .sidebar-avatar {
+        background: #eef5fb !important;
+        border: 1px solid rgba(255,255,255,.35) !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+    <style>
+    [data-testid="stMetric"] {
+        color: var(--text-color) !important;
+    }
+
+    [data-testid="stMetricLabel"],
+    [data-testid="stMetricLabel"] *,
+    [data-testid="stMetricValue"],
+    [data-testid="stMetricValue"] *,
+    [data-testid="stMetricDelta"],
+    [data-testid="stMetricDelta"] * {
+        color: var(--text-color) !important;
+        -webkit-text-fill-color: var(--text-color) !important;
+        opacity: 1 !important;
+    }
+
+    [data-testid="stMetricLabel"] {
+        opacity: .72 !important;
+    }
+
+    [data-testid="stMetricValue"] {
+        font-weight: 650 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
