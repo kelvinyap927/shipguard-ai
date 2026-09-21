@@ -3923,6 +3923,12 @@ if page_to_show == "Home":
             else 0
         )
 
+        # SHIPGUARD PIPELINE PROGRESS POLISH V1
+        st.caption(
+            "Pipeline · Classify emails → Extract document fields → "
+            "Verify discrepancies → Finalise review queue"
+        )
+
         progress_bar = st.progress(
             min(progress_percentage, 100)
         )
@@ -3937,7 +3943,7 @@ if page_to_show == "Home":
         else:
             progress_text.caption(
                 f"Processing {current_processed}/"
-                f"{analysis_total_hint} emails"
+                f"{analysis_total_hint} emails · end-to-end analysis in progress"
             )
 
         metric_columns = st.columns(5)
@@ -4032,6 +4038,17 @@ if page_to_show == "Home":
                     event.get("pipeline_failures", 0)
                 )
 
+                # SHIPGUARD FAST ANALYSIS V1
+                # Keep internal progress accurate for every email,
+                # but only redraw Streamlit UI every 10 emails.
+                should_render = (
+                    processed % 10 == 0
+                    or processed >= total
+                )
+
+                if not should_render:
+                    return
+
                 percentage = (
                     int(processed / total * 100)
                     if total
@@ -4043,7 +4060,8 @@ if page_to_show == "Home":
                 )
 
                 progress_text.caption(
-                    f"Processing {processed}/{total} emails"
+                    f"Processing {processed}/{total} emails · "
+                    "classify → extract → verify"
                 )
 
                 processed_metric.metric(
@@ -4071,7 +4089,7 @@ if page_to_show == "Home":
                 analysis_emails,
                 progress_callback=update_analysis_progress,
                 start_index=start_index,
-                batch_size=10,
+                batch_size=50,
                 initial_counts=initial_counts,
                 initial_failures=initial_failures,
             )
@@ -4162,8 +4180,19 @@ if page_to_show == "Home":
             )
 
     if analysis_status == "complete":
+        completed_summary = (
+            st.session_state.get("full_analysis_summary") or {}
+        )
+        completed_processed = int(
+            completed_summary.get("processed", 0)
+        )
+        completed_total = int(
+            completed_summary.get("total", analysis_total_hint)
+        )
+
         st.success(
-            "Full inbox analysis completed successfully."
+            f"Full inbox analysis completed successfully · "
+            f"{completed_processed}/{completed_total} records processed."
         )
 
     total_records = len(df)
@@ -4201,13 +4230,75 @@ if page_to_show == "Home":
         summary=analysis_summary,
     )
 
+    # SHIPGUARD SUBMISSION READINESS V1
+    record_ids = df["ID"] if "ID" in df.columns else pd.Series(dtype="object")
+
+    missing_id_count = int(record_ids.isna().sum())
+    normalized_ids = record_ids.dropna().astype(str).str.strip()
+    missing_id_count += int(normalized_ids.eq("").sum())
+
+    valid_ids = normalized_ids[normalized_ids.ne("")]
+    duplicate_id_count = int(valid_ids.duplicated().sum())
+
+    analysis_complete = (
+        total_records > 0
+        and processed_count >= total_records
+    )
+
+    submission_ready = (
+        analysis_complete
+        and failed_count == 0
+        and missing_id_count == 0
+        and duplicate_id_count == 0
+    )
+
+    if submission_ready:
+        readiness_badge = '<span class="badge badge-green">READY ✓</span>'
+        readiness_detail = (
+            f"{processed_count}/{total_records} analysed · "
+            "IDs unique · 0 failures"
+        )
+
+    elif failed_count > 0:
+        readiness_badge = '<span class="badge badge-red">ATTENTION</span>'
+        readiness_detail = (
+            f"{failed_count} pipeline failure(s) · "
+            f"{processed_count}/{total_records} analysed"
+        )
+
+    elif missing_id_count > 0 or duplicate_id_count > 0:
+        readiness_badge = '<span class="badge badge-orange">ATTENTION</span>'
+        readiness_detail = (
+            f"{missing_id_count} missing ID(s) · "
+            f"{duplicate_id_count} duplicate ID(s)"
+        )
+
+    else:
+        readiness_badge = '<span class="badge badge-orange">PENDING</span>'
+        readiness_detail = (
+            f"{processed_count}/{total_records} analysed · "
+            "complete analysis to validate"
+        )
+
     st.markdown(
         f"""
         <div class="command-strip">
             <div class="command-chip">
-                <div class="command-chip-label">System status</div>
+                <div class="command-chip-label">Submission readiness</div>
                 <div class="command-chip-value">
-                    {system_status_html}
+                    {readiness_badge}
+                </div>
+                <div style="
+                    margin-top:5px;
+                    font-size:10px;
+                    line-height:1.35;
+                    color:color-mix(
+                        in srgb,
+                        var(--st-text-color) 68%,
+                        transparent
+                    );
+                ">
+                    {readiness_detail}
                 </div>
             </div>
             <div class="command-chip">
@@ -5352,6 +5443,21 @@ elif page_to_show == "Document Check Case":
                             "Draft Bill of Lading (BL)"
                         ]
 
+                        # SHIPGUARD WHY FLAGGED V2
+                        verification_reason = discrepancy.get(
+                            "Verification Reason"
+                        )
+
+                        if not verification_reason:
+                            verification_reason = (
+                                "The Shipping Instruction and Draft BL "
+                                "values do not match after verification."
+                            )
+                        else:
+                            verification_reason = str(
+                                verification_reason
+                            ).replace("_", " ").strip()
+
                         difference = format_difference(
                             si_value,
                             bl_value,
@@ -5393,6 +5499,42 @@ elif page_to_show == "Document Check Case":
                                     with the customer before
                                     finalising the BL.
                                 </span>
+
+                                <br><br>
+
+                                <div style="
+                                    padding:10px 12px;
+                                    border-radius:9px;
+                                    background:color-mix(
+                                        in srgb,
+                                        var(--st-primary-color) 7%,
+                                        transparent
+                                    );
+                                    border:1px solid color-mix(
+                                        in srgb,
+                                        var(--st-primary-color) 18%,
+                                        transparent
+                                    );
+                                ">
+                                    <div style="
+                                        font-size:9px;
+                                        font-weight:800;
+                                        letter-spacing:.7px;
+                                        text-transform:uppercase;
+                                        margin-bottom:4px;
+                                        color:var(--st-primary-color);
+                                    ">
+                                        Why Flagged
+                                    </div>
+
+                                    <div style="
+                                        font-size:12px;
+                                        line-height:1.5;
+                                        color:var(--st-text-color);
+                                    ">
+                                        {safe_text(verification_reason)}
+                                    </div>
+                                </div>
 
                             </div>
                             """,
@@ -6020,6 +6162,21 @@ elif page_to_show == "Document Check Case":
                         "Draft Bill of Lading (BL)"
                     ]
 
+                    # SHIPGUARD WHY FLAGGED V2
+                    verification_reason = discrepancy.get(
+                        "Verification Reason"
+                    )
+
+                    if not verification_reason:
+                        verification_reason = (
+                            "The Shipping Instruction and Draft BL "
+                            "values do not match after verification."
+                        )
+                    else:
+                        verification_reason = str(
+                            verification_reason
+                        ).replace("_", " ").strip()
+
                     difference = format_difference(
                         si_value,
                         bl_value,
@@ -6073,6 +6230,16 @@ elif page_to_show == "Document Check Case":
 
                         <div class="ai-summary-value">
                             {safe_text(bl_value)}
+                        </div>
+
+                        <br>
+
+                        <div class="ai-summary-label">
+                            Why Flagged
+                        </div>
+
+                        <div class="ai-summary-value">
+                            {safe_text(verification_reason)}
                         </div>
                         """,
                         unsafe_allow_html=True,
@@ -6967,3 +7134,887 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
+# SHIPGUARD DARK MODE LED POLISH V2 START
+# Runs only when Streamlit's ACTIVE theme is actually dark.
+try:
+    _sg_dark_mode = st.context.theme.type == "dark"
+except Exception:
+    _sg_dark_mode = False
+
+if _sg_dark_mode:
+    st.markdown(
+        """
+        <style>
+
+        /* =====================================================
+           DARK MODE ONLY — HOME KPI CARDS
+           ===================================================== */
+
+        [data-testid="stMain"] [data-testid="stMetric"] {
+            background:
+                linear-gradient(
+                    145deg,
+                    rgba(17, 34, 57, 0.98),
+                    rgba(8, 20, 38, 0.98)
+                ) !important;
+
+            border: 1px solid rgba(96, 165, 250, 0.42) !important;
+
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.05),
+                0 8px 24px rgba(0,0,0,0.28),
+                0 0 16px rgba(59,130,246,0.15) !important;
+        }
+
+        [data-testid="stMain"] [data-testid="stMetric"]:hover {
+            border-color: rgba(96,165,250,0.72) !important;
+
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.07),
+                0 12px 28px rgba(0,0,0,0.32),
+                0 0 24px rgba(59,130,246,0.24) !important;
+
+            transform: translateY(-2px);
+        }
+
+
+        /* KPI labels — much easier to read */
+        [data-testid="stMain"] [data-testid="stMetricLabel"],
+        [data-testid="stMain"] [data-testid="stMetricLabel"] *,
+        [data-testid="stMain"] [data-testid="stMetricLabel"] p {
+            color: #b9cce2 !important;
+            -webkit-text-fill-color: #b9cce2 !important;
+
+            opacity: 1 !important;
+
+            font-weight: 700 !important;
+        }
+
+
+        /* KPI numbers — bright LED-style white */
+        [data-testid="stMain"] [data-testid="stMetricValue"],
+        [data-testid="stMain"] [data-testid="stMetricValue"] *,
+        [data-testid="stMain"] [data-testid="stMetricValue"] div,
+        [data-testid="stMain"] [data-testid="stMetricValue"] p {
+            color: #f7fbff !important;
+            -webkit-text-fill-color: #f7fbff !important;
+
+            opacity: 1 !important;
+
+            font-weight: 900 !important;
+
+            text-shadow:
+                0 0 8px rgba(147,197,253,0.18),
+                0 0 18px rgba(59,130,246,0.12) !important;
+        }
+
+
+        /* =====================================================
+           DARK MODE ONLY — ANALYTICS KPI CARDS
+           ===================================================== */
+
+        [data-testid="stMain"] .sg-intelligence-card {
+            background:
+                linear-gradient(
+                    145deg,
+                    rgba(17, 34, 57, 0.98),
+                    rgba(8, 20, 38, 0.98)
+                ) !important;
+
+            border: 1px solid rgba(96,165,250,0.42) !important;
+
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.05),
+                0 8px 24px rgba(0,0,0,0.28),
+                0 0 16px rgba(59,130,246,0.15) !important;
+        }
+
+        [data-testid="stMain"] .sg-intelligence-card:hover {
+            border-color: rgba(96,165,250,0.72) !important;
+
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.07),
+                0 12px 28px rgba(0,0,0,0.32),
+                0 0 24px rgba(59,130,246,0.24) !important;
+
+            transform: translateY(-2px);
+        }
+
+        [data-testid="stMain"] .sg-intelligence-label {
+            color: #b9cce2 !important;
+            -webkit-text-fill-color: #b9cce2 !important;
+            opacity: 1 !important;
+        }
+
+        [data-testid="stMain"] .sg-intelligence-value {
+            color: #f7fbff !important;
+            -webkit-text-fill-color: #f7fbff !important;
+
+            opacity: 1 !important;
+
+            text-shadow:
+                0 0 8px rgba(147,197,253,0.18),
+                0 0 18px rgba(59,130,246,0.12) !important;
+        }
+
+
+        /* =====================================================
+           DARK MODE ONLY — SUPPORTING CARDS
+           Subtle LED border, not excessive neon.
+           ===================================================== */
+
+        [data-testid="stMain"] .command-chip,
+        [data-testid="stMain"] .status-card,
+        [data-testid="stMain"] .sg-insight-card,
+        [data-testid="stMain"] .sg-ai-callout,
+        [data-testid="stMain"] .panel,
+        [data-testid="stMain"] .doc-card,
+        [data-testid="stMain"] .action-box,
+        [data-testid="stMain"] .table-box,
+        [data-testid="stMain"] .ai-summary,
+        [data-testid="stMain"] .document-summary,
+        [data-testid="stMain"] .review-panel,
+        [data-testid="stMain"] .priority-wrapper,
+        [data-testid="stMain"] .case-banner,
+        [data-testid="stMain"] .info-box {
+            border-color: rgba(96,165,250,0.27) !important;
+
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.025),
+                0 8px 20px rgba(0,0,0,0.20),
+                0 0 12px rgba(59,130,246,0.07) !important;
+        }
+
+
+        /* Blue action button glow */
+        [data-testid="stMain"] [data-testid="stBaseButton-primary"],
+        [data-testid="stMain"] button[kind="primary"] {
+            box-shadow:
+                0 8px 22px rgba(37,99,235,0.30),
+                0 0 18px rgba(59,130,246,0.15) !important;
+        }
+
+        [data-testid="stMain"] [data-testid="stBaseButton-primary"]:hover,
+        [data-testid="stMain"] button[kind="primary"]:hover {
+            box-shadow:
+                0 10px 26px rgba(37,99,235,0.38),
+                0 0 24px rgba(59,130,246,0.24) !important;
+        }
+
+
+        @media (prefers-reduced-motion: reduce) {
+            [data-testid="stMain"] [data-testid="stMetric"],
+            [data-testid="stMain"] .sg-intelligence-card {
+                transform: none !important;
+                transition: none !important;
+            }
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+# SHIPGUARD DARK MODE LED POLISH V2 END
+
+
+# SHIPGUARD TOPRIGHT DARK MENU FIX START
+# Uses the ACTUAL Streamlit theme, not the Mac/browser theme.
+try:
+    _sg_active_theme = st.context.theme.type
+except Exception:
+    _sg_active_theme = None
+
+if _sg_active_theme == "dark":
+    st.markdown(
+        """
+        <style>
+
+        /* Dark mode: bright Streamlit toolbar */
+        header [data-testid="stToolbar"],
+        header [data-testid="stToolbar"] button,
+        header [data-testid="stToolbar"] button *,
+        header [data-testid="stToolbar"] [role="button"],
+        header [data-testid="stToolbar"] [role="button"] * {
+            color: #f8fbff !important;
+            -webkit-text-fill-color: #f8fbff !important;
+            opacity: 1 !important;
+        }
+
+        /* Dark mode popup menu */
+        div[data-baseweb="popover"] > div,
+        div[data-baseweb="popover"] ul {
+            background: #111827 !important;
+            border: 1px solid rgba(96,165,250,.24) !important;
+        }
+
+        div[data-baseweb="popover"] [role="menuitem"],
+        div[data-baseweb="popover"] [role="menuitem"] *,
+        div[data-baseweb="popover"] li,
+        div[data-baseweb="popover"] li * {
+            color: #f1f5f9 !important;
+            -webkit-text-fill-color: #f1f5f9 !important;
+            opacity: 1 !important;
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+elif _sg_active_theme == "light":
+    st.markdown(
+        """
+        <style>
+
+        /* Light mode: restore dark toolbar text */
+        header [data-testid="stToolbar"],
+        header [data-testid="stToolbar"] button,
+        header [data-testid="stToolbar"] button *,
+        header [data-testid="stToolbar"] [role="button"],
+        header [data-testid="stToolbar"] [role="button"] * {
+            color: #0f172a !important;
+            -webkit-text-fill-color: #0f172a !important;
+            opacity: 1 !important;
+        }
+
+        /* Light popup menu */
+        div[data-baseweb="popover"] > div,
+        div[data-baseweb="popover"] ul {
+            background: #ffffff !important;
+            border: 1px solid #d8e1eb !important;
+        }
+
+        div[data-baseweb="popover"] [role="menuitem"],
+        div[data-baseweb="popover"] [role="menuitem"] *,
+        div[data-baseweb="popover"] li,
+        div[data-baseweb="popover"] li * {
+            color: #0f172a !important;
+            -webkit-text-fill-color: #0f172a !important;
+            opacity: 1 !important;
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+# SHIPGUARD TOPRIGHT DARK MENU FIX END
+
+
+# SHIPGUARD STREAMLIT DARK CHROME FIX START
+# Fixes Streamlit's own toolbar, menu and Settings dialog.
+# Only injected when the ACTIVE Streamlit theme is dark.
+try:
+    _sg_streamlit_dark = st.context.theme.type == "dark"
+except Exception:
+    _sg_streamlit_dark = False
+
+if _sg_streamlit_dark:
+    st.markdown(
+        """
+        <style>
+
+        /* ===============================================
+           TOP TOOLBAR
+           =============================================== */
+
+        header [data-testid="stToolbar"],
+        header [data-testid="stToolbar"] button,
+        header [data-testid="stToolbar"] button *,
+        header [data-testid="stToolbar"] [role="button"],
+        header [data-testid="stToolbar"] [role="button"] * {
+            color: #f8fafc !important;
+            -webkit-text-fill-color: #f8fafc !important;
+            opacity: 1 !important;
+        }
+
+
+        /* ===============================================
+           THREE-DOT MENU / POPOVER
+           =============================================== */
+
+        div[data-baseweb="popover"] > div,
+        div[data-baseweb="popover"] ul {
+            background: #111827 !important;
+            border-color: #334155 !important;
+        }
+
+        div[data-baseweb="popover"] [role="menuitem"],
+        div[data-baseweb="popover"] [role="menuitem"] *,
+        div[data-baseweb="popover"] li,
+        div[data-baseweb="popover"] li *,
+        div[data-baseweb="popover"] button,
+        div[data-baseweb="popover"] button *,
+        div[data-baseweb="popover"] span,
+        div[data-baseweb="popover"] p {
+            color: #f1f5f9 !important;
+            -webkit-text-fill-color: #f1f5f9 !important;
+            opacity: 1 !important;
+        }
+
+        div[data-baseweb="popover"] [role="menuitem"]:hover,
+        div[data-baseweb="popover"] li:hover {
+            background: rgba(59,130,246,.14) !important;
+        }
+
+
+        /* ===============================================
+           SETTINGS DIALOG
+           =============================================== */
+
+        [data-testid="stDialog"] > div,
+        div[role="dialog"] {
+            background: #0f1117 !important;
+            color: #f8fafc !important;
+        }
+
+        [data-testid="stDialog"] *,
+        div[role="dialog"] h1,
+        div[role="dialog"] h2,
+        div[role="dialog"] h3,
+        div[role="dialog"] p,
+        div[role="dialog"] span,
+        div[role="dialog"] label {
+            color: #f1f5f9 !important;
+            -webkit-text-fill-color: #f1f5f9 !important;
+        }
+
+
+        /* Settings descriptions / secondary text */
+        div[role="dialog"] small,
+        div[role="dialog"] [data-testid="stCaptionContainer"],
+        div[role="dialog"] [data-testid="stCaptionContainer"] * {
+            color: #cbd5e1 !important;
+            -webkit-text-fill-color: #cbd5e1 !important;
+            opacity: 1 !important;
+        }
+
+
+        /* ===============================================
+           THEME DROPDOWN
+           =============================================== */
+
+        div[role="dialog"] [data-baseweb="select"] > div {
+            background: #182231 !important;
+            border-color: #3b82f6 !important;
+            color: #f8fafc !important;
+        }
+
+        div[role="dialog"] [data-baseweb="select"] *,
+        div[role="dialog"] [data-baseweb="select"] span {
+            color: #f8fafc !important;
+            -webkit-text-fill-color: #f8fafc !important;
+            opacity: 1 !important;
+        }
+
+
+        /* Dropdown popup options */
+        [data-baseweb="menu"] {
+            background: #111827 !important;
+        }
+
+        [data-baseweb="menu"] *,
+        [role="option"],
+        [role="option"] * {
+            color: #f1f5f9 !important;
+            -webkit-text-fill-color: #f1f5f9 !important;
+            opacity: 1 !important;
+        }
+
+        [role="option"]:hover {
+            background: rgba(59,130,246,.16) !important;
+        }
+
+
+        /* ===============================================
+           SETTINGS BUTTONS / CLOSE
+           =============================================== */
+
+        div[role="dialog"] button,
+        div[role="dialog"] button * {
+            color: #f8fafc !important;
+            -webkit-text-fill-color: #f8fafc !important;
+            opacity: 1 !important;
+        }
+
+        div[role="dialog"] button {
+            border-color: #475569 !important;
+        }
+
+
+        /* ===============================================
+           RADIO / CHECK / TOGGLE LABELS
+           =============================================== */
+
+        div[role="dialog"] [role="radio"] + div,
+        div[role="dialog"] [role="checkbox"] + div,
+        div[role="dialog"] [data-baseweb="checkbox"] *,
+        div[role="dialog"] [data-baseweb="radio"] * {
+            color: #f1f5f9 !important;
+            -webkit-text-fill-color: #f1f5f9 !important;
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+# SHIPGUARD STREAMLIT DARK CHROME FIX END
+
+
+# SHIPGUARD SIDEBAR SETTINGS VISIBILITY FIX START
+st.markdown(
+    """
+    <style>
+
+    /* Leave enough scroll space above the fixed Account footer */
+    section[data-testid="stSidebar"] > div {
+        padding-bottom: 235px !important;
+        scroll-padding-bottom: 235px !important;
+    }
+
+    /* Settings navigation must remain accessible above Account */
+    .st-key-system_nav {
+        margin-bottom: 145px !important;
+        position: relative !important;
+        z-index: 2 !important;
+    }
+
+    /* Keep account footer fixed and visually separate */
+    .st-key-sidebar_account_footer {
+        z-index: 50 !important;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+# SHIPGUARD SIDEBAR SETTINGS VISIBILITY FIX END
+
+
+# SHIPGUARD SETTINGS DARK TEXT FIX START
+try:
+    _sg_settings_dark = st.context.theme.type == "dark"
+except Exception:
+    _sg_settings_dark = False
+
+if _sg_settings_dark:
+    st.markdown(
+        """
+        <style>
+
+        /* Settings toggle labels */
+        [data-testid="stMain"] [data-testid="stToggle"] label,
+        [data-testid="stMain"] [data-testid="stToggle"] label *,
+        [data-testid="stMain"] [data-baseweb="checkbox"] + div,
+        [data-testid="stMain"] [data-baseweb="checkbox"] + div *,
+        [data-testid="stMain"] [role="switch"] + div,
+        [data-testid="stMain"] [role="switch"] + div * {
+            color: #e8f1fb !important;
+            -webkit-text-fill-color: #e8f1fb !important;
+            opacity: 1 !important;
+            font-weight: 600 !important;
+        }
+
+        /* Settings helper text */
+        [data-testid="stMain"] .stCaptionContainer,
+        [data-testid="stMain"] .stCaptionContainer *,
+        [data-testid="stMain"] [data-testid="stCaptionContainer"],
+        [data-testid="stMain"] [data-testid="stCaptionContainer"] * {
+            color: #b9c9da !important;
+            -webkit-text-fill-color: #b9c9da !important;
+            opacity: 1 !important;
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+# SHIPGUARD SETTINGS DARK TEXT FIX END
+
+
+# SHIPGUARD DARK TOGGLE LABEL FIX START
+try:
+    _sg_toggle_dark = st.context.theme.type == "dark"
+except Exception:
+    _sg_toggle_dark = False
+
+if _sg_toggle_dark:
+    st.markdown(
+        """
+        <style>
+
+        /* Streamlit toggle text - dark mode only */
+        [data-testid="stMain"] [data-testid="stToggle"] p,
+        [data-testid="stMain"] [data-testid="stToggle"] span,
+        [data-testid="stMain"] [data-testid="stToggle"] label,
+        [data-testid="stMain"] [data-testid="stToggle"] label *,
+        [data-testid="stMain"] [data-testid="stToggle"] div:not([role="switch"]) {
+            color: #f1f5f9 !important;
+            -webkit-text-fill-color: #f1f5f9 !important;
+            opacity: 1 !important;
+        }
+
+        [data-testid="stMain"] [data-testid="stToggle"] p {
+            font-weight: 600 !important;
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+# SHIPGUARD DARK TOGGLE LABEL FIX END
+
+
+# SHIPGUARD ACCOUNT DARK BUTTON FIX START
+try:
+    _sg_account_dark = st.context.theme.type == "dark"
+except Exception:
+    _sg_account_dark = False
+
+if _sg_account_dark:
+    st.markdown(
+        """
+        <style>
+
+        /* Account footer + expanded account actions */
+        .st-key-sidebar_account_footer button,
+        .st-key-sidebar_account_footer button *,
+        .st-key-sidebar_account_footer [data-testid="stBaseButton-secondary"],
+        .st-key-sidebar_account_footer [data-testid="stBaseButton-secondary"] * {
+            color: #0f2942 !important;
+            -webkit-text-fill-color: #0f2942 !important;
+            opacity: 1 !important;
+            font-weight: 650 !important;
+        }
+
+        .st-key-sidebar_account_footer button,
+        .st-key-sidebar_account_footer [data-testid="stBaseButton-secondary"] {
+            background: #f8fafc !important;
+            border: 1px solid #d8e1eb !important;
+        }
+
+        .st-key-sidebar_account_footer button:hover,
+        .st-key-sidebar_account_footer [data-testid="stBaseButton-secondary"]:hover {
+            background: #eaf2fb !important;
+            border-color: #93b7dd !important;
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+# SHIPGUARD ACCOUNT DARK BUTTON FIX END
+
+
+
+# SHIPGUARD THEME SWITCH STABILITY V1
+# Final shared layer: keeps active Streamlit Light/Dark theme consistent
+# during analysis reruns and theme switching.
+st.markdown(
+    """
+    <style>
+
+    /* =========================================================
+       STREAMLIT HEADER / TOOLBAR
+       ========================================================= */
+
+    header[data-testid="stHeader"] {
+        background: var(--st-background-color) !important;
+        color: var(--st-text-color) !important;
+
+        border-bottom: 1px solid color-mix(
+            in srgb,
+            var(--st-text-color) 12%,
+            transparent
+        ) !important;
+    }
+
+    header [data-testid="stToolbar"],
+    header [data-testid="stToolbar"] *,
+    header [data-testid="stToolbar"] button,
+    header [data-testid="stToolbar"] button *,
+    header [data-testid="stToolbar"] [role="button"],
+    header [data-testid="stToolbar"] [role="button"] * {
+        color: var(--st-text-color) !important;
+        -webkit-text-fill-color: var(--st-text-color) !important;
+        opacity: 1 !important;
+    }
+
+    header [data-testid="stToolbar"] svg,
+    header button svg {
+        color: var(--st-text-color) !important;
+        fill: currentColor !important;
+        stroke: currentColor !important;
+        opacity: 1 !important;
+    }
+
+
+    /* =========================================================
+       LIVE ANALYSIS KPI CARDS
+       Works in BOTH Light + Dark.
+       ========================================================= */
+
+    [data-testid="stMain"] [data-testid="stMetric"] {
+        background:
+            linear-gradient(
+                145deg,
+                var(--st-secondary-background-color),
+                color-mix(
+                    in srgb,
+                    var(--st-secondary-background-color) 94%,
+                    var(--st-primary-color) 6%
+                )
+            ) !important;
+
+        color: var(--st-text-color) !important;
+
+        border: 1px solid color-mix(
+            in srgb,
+            var(--st-primary-color) 30%,
+            var(--st-text-color) 8%
+        ) !important;
+
+        box-shadow:
+            0 8px 22px rgba(0,0,0,0.10),
+            0 0 14px color-mix(
+                in srgb,
+                var(--st-primary-color) 9%,
+                transparent
+            ) !important;
+
+        transition:
+            transform 160ms ease,
+            border-color 160ms ease,
+            box-shadow 160ms ease !important;
+    }
+
+    [data-testid="stMain"] [data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
+
+        border-color: color-mix(
+            in srgb,
+            var(--st-primary-color) 55%,
+            var(--st-text-color) 8%
+        ) !important;
+
+        box-shadow:
+            0 11px 26px rgba(0,0,0,0.13),
+            0 0 20px color-mix(
+                in srgb,
+                var(--st-primary-color) 14%,
+                transparent
+            ) !important;
+    }
+
+    [data-testid="stMain"] [data-testid="stMetricLabel"],
+    [data-testid="stMain"] [data-testid="stMetricLabel"] *,
+    [data-testid="stMain"] [data-testid="stMetricLabel"] p {
+        color: color-mix(
+            in srgb,
+            var(--st-text-color) 72%,
+            transparent
+        ) !important;
+
+        -webkit-text-fill-color: color-mix(
+            in srgb,
+            var(--st-text-color) 72%,
+            transparent
+        ) !important;
+
+        opacity: 1 !important;
+        font-weight: 700 !important;
+    }
+
+    [data-testid="stMain"] [data-testid="stMetricValue"],
+    [data-testid="stMain"] [data-testid="stMetricValue"] *,
+    [data-testid="stMain"] [data-testid="stMetricValue"] p,
+    [data-testid="stMain"] [data-testid="stMetricValue"] div {
+        color: var(--st-text-color) !important;
+        -webkit-text-fill-color: var(--st-text-color) !important;
+
+        opacity: 1 !important;
+        font-weight: 850 !important;
+
+        text-shadow:
+            0 0 10px color-mix(
+                in srgb,
+                var(--st-primary-color) 12%,
+                transparent
+            ) !important;
+    }
+
+
+    /* =========================================================
+       ANALYSIS PROGRESS TEXT
+       ========================================================= */
+
+    [data-testid="stMain"] [data-testid="stCaptionContainer"],
+    [data-testid="stMain"] [data-testid="stCaptionContainer"] *,
+    [data-testid="stMain"] .stCaption,
+    [data-testid="stMain"] .stCaption * {
+        color: color-mix(
+            in srgb,
+            var(--st-text-color) 78%,
+            transparent
+        ) !important;
+
+        -webkit-text-fill-color: color-mix(
+            in srgb,
+            var(--st-text-color) 78%,
+            transparent
+        ) !important;
+
+        opacity: 1 !important;
+    }
+
+
+    /* =========================================================
+       STREAMLIT RERUN / STALE STATE
+       Avoid the dramatic white-mode fade while processing.
+       ========================================================= */
+
+    [data-testid="stMain"] [data-stale="true"] {
+        opacity: 1 !important;
+    }
+
+
+    /* =========================================================
+       POPOVER FOLLOWS CURRENT THEME
+       ========================================================= */
+
+    div[data-baseweb="popover"] > div,
+    div[data-baseweb="popover"] ul {
+        background: var(--st-secondary-background-color) !important;
+
+        border-color: color-mix(
+            in srgb,
+            var(--st-text-color) 16%,
+            transparent
+        ) !important;
+    }
+
+    div[data-baseweb="popover"] [role="menuitem"],
+    div[data-baseweb="popover"] [role="menuitem"] *,
+    div[data-baseweb="popover"] li,
+    div[data-baseweb="popover"] li * {
+        color: var(--st-text-color) !important;
+        -webkit-text-fill-color: var(--st-text-color) !important;
+        opacity: 1 !important;
+    }
+
+
+    @media (prefers-reduced-motion: reduce) {
+        [data-testid="stMain"] [data-testid="stMetric"] {
+            transform: none !important;
+            transition: none !important;
+        }
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+# SHIPGUARD THEME SWITCH STABILITY V1 END
+
+
+# SHIPGUARD LIVE KPI LED V1
+try:
+    _sg_live_kpi_dark = st.context.theme.type == "dark"
+except Exception:
+    _sg_live_kpi_dark = False
+
+if _sg_live_kpi_dark:
+    st.markdown(
+        """
+        <style>
+
+        /* =====================================================
+           DARK MODE ONLY — LIVE KPI METRIC CARDS
+           ===================================================== */
+
+        [data-testid="stMetric"] {
+            background:
+                linear-gradient(
+                    145deg,
+                    rgba(8, 18, 34, 0.98) 0%,
+                    rgba(10, 31, 58, 0.98) 100%
+                ) !important;
+
+            border: 1px solid rgba(59,130,246,.40) !important;
+            border-radius: 20px !important;
+            padding: 18px 22px !important;
+
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.05),
+                0 10px 28px rgba(0,0,0,.34),
+                0 0 20px rgba(37,99,235,.14) !important;
+
+            transition:
+                transform .18s ease,
+                box-shadow .18s ease,
+                border-color .18s ease !important;
+        }
+
+        [data-testid="stMetric"]:hover {
+            transform: translateY(-2px);
+            border-color: rgba(96,165,250,.74) !important;
+
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.08),
+                0 14px 32px rgba(0,0,0,.40),
+                0 0 28px rgba(59,130,246,.22) !important;
+        }
+
+        /* Metric labels */
+        [data-testid="stMetricLabel"],
+        [data-testid="stMetricLabel"] *,
+        [data-testid="stMetricLabel"] p {
+            color: #9bb8d7 !important;
+            -webkit-text-fill-color: #9bb8d7 !important;
+            opacity: 1 !important;
+
+            font-size: 13px !important;
+            font-weight: 800 !important;
+            letter-spacing: .5px !important;
+            text-transform: uppercase !important;
+        }
+
+        /* Metric values */
+        [data-testid="stMetricValue"],
+        [data-testid="stMetricValue"] *,
+        [data-testid="stMetricValue"] div,
+        [data-testid="stMetricValue"] p {
+            color: #f8fcff !important;
+            -webkit-text-fill-color: #f8fcff !important;
+            opacity: 1 !important;
+
+            font-weight: 900 !important;
+            letter-spacing: -0.02em !important;
+
+            text-shadow:
+                0 0 10px rgba(147,197,253,.20),
+                0 0 24px rgba(37,99,235,.18) !important;
+        }
+
+        /* Delta / helper text */
+        [data-testid="stMetricDelta"],
+        [data-testid="stMetricDelta"] * {
+            color: #86efac !important;
+            -webkit-text-fill-color: #86efac !important;
+            opacity: 1 !important;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            [data-testid="stMetric"],
+            [data-testid="stMetric"]:hover {
+                transform: none !important;
+                transition: none !important;
+            }
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+# SHIPGUARD LIVE KPI LED V1 END

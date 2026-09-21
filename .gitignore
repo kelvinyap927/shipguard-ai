@@ -9,3 +9,7 @@ venv/
 
 # Generated results
 out/
+
+# Generated submission output
+submission.json
+.Rhistory
