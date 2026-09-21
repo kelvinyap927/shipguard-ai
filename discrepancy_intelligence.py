@@ -259,23 +259,17 @@ def _render_intelligence_metric(
     subtitle=None,
     compact=False,
 ):
-    value_size = "25px" if compact else "42px"
+    value_class = (
+        "sg-intelligence-value compact"
+        if compact
+        else "sg-intelligence-value"
+    )
 
     subtitle_html = ""
 
     if subtitle:
         subtitle_html = f"""
-        <div style="
-            display:inline-block;
-            margin-top:8px;
-            padding:3px 8px;
-            border-radius:999px;
-            background:#174b35;
-            color:#dff7e9;
-            -webkit-text-fill-color:#dff7e9;
-            font-size:11px;
-            font-weight:700;
-        ">
+        <div class="sg-intelligence-badge">
             {subtitle}
         </div>
         """
@@ -283,37 +277,18 @@ def _render_intelligence_metric(
     with container:
         st.markdown(
             f"""
-            <div style="
-                min-height:132px;
-                padding:15px 14px 13px;
-                border-radius:14px;
-                border:1px solid #34465c;
-                background:#111c2d;
-                box-sizing:border-box;
-            ">
-                <div style="
-                    font-size:13px;
-                    font-weight:600;
-                    color:#a8bbcf;
-                    -webkit-text-fill-color:#a8bbcf;
-                    margin-bottom:7px;
-                ">
+            <div class="sg-intelligence-card">
+
+                <div class="sg-intelligence-label">
                     {label}
                 </div>
 
-                <div style="
-                    font-size:{value_size};
-                    line-height:1.08;
-                    font-weight:700;
-                    color:#f4f8fc;
-                    -webkit-text-fill-color:#f4f8fc;
-                    white-space:normal;
-                    overflow-wrap:anywhere;
-                ">
+                <div class="{value_class}">
                     {value}
                 </div>
 
                 {subtitle_html}
+
             </div>
             """,
             unsafe_allow_html=True,

@@ -3045,6 +3045,19 @@ def render_filtered_records(
 
     working_df = record_df.copy()
 
+    # SHARED RECORD PAGINATION
+    # All records remain available; only a small page is rendered.
+    page_size = 20
+
+    page_scope = (
+        search_key
+        if search_key
+        else "filtered_records"
+    )
+
+    page_state_key = f"{page_scope}_page"
+    query_state_key = f"{page_scope}_last_query"
+
     if show_search:
 
         query = st.text_input(
@@ -3055,6 +3068,16 @@ def render_filtered_records(
             label_visibility="collapsed",
             key=search_key,
         )
+
+        # Return to page 1 when the search changes.
+        previous_query = st.session_state.get(
+            query_state_key,
+            None,
+        )
+
+        if previous_query != query:
+            st.session_state[page_state_key] = 1
+            st.session_state[query_state_key] = query
 
         working_df = search_dataframe(
             working_df,
@@ -3081,16 +3104,90 @@ def render_filtered_records(
 
         return
 
-    st.markdown(
-        f"""
-        <div class="small-muted" style="margin-bottom:10px;">
-            {len(working_df)} record(s)
-        </div>
-        """,
-        unsafe_allow_html=True,
+    total_records = len(working_df)
+
+    total_pages = max(
+        1,
+        (total_records + page_size - 1)
+        // page_size,
     )
 
-    for row_index, row in working_df.iterrows():
+    if page_state_key not in st.session_state:
+        st.session_state[page_state_key] = 1
+
+    st.session_state[page_state_key] = min(
+        max(
+            int(st.session_state[page_state_key]),
+            1,
+        ),
+        total_pages,
+    )
+
+    current_page = int(
+        st.session_state[page_state_key]
+    )
+
+    start_index = (
+        (current_page - 1)
+        * page_size
+    )
+
+    end_index = min(
+        start_index + page_size,
+        total_records,
+    )
+
+    page_df = working_df.iloc[
+        start_index:end_index
+    ]
+
+    def _previous_records_page():
+        st.session_state[page_state_key] = max(
+            1,
+            int(st.session_state.get(page_state_key, 1)) - 1,
+        )
+
+    def _next_records_page():
+        st.session_state[page_state_key] = min(
+            total_pages,
+            int(st.session_state.get(page_state_key, 1)) + 1,
+        )
+
+    info_col, previous_col, next_col = st.columns(
+        [4.0, 1.0, 1.0]
+    )
+
+    with info_col:
+        st.markdown(
+            f"""
+            <div class="small-muted" style="margin-bottom:10px;">
+                Showing {start_index + 1}–{end_index}
+                of {total_records} record(s)
+                · Page {current_page} of {total_pages}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with previous_col:
+        st.button(
+            "← Previous",
+            key=f"{page_scope}_previous_page",
+            use_container_width=True,
+            disabled=current_page <= 1,
+            on_click=_previous_records_page,
+        )
+
+    with next_col:
+        st.button(
+            "Next →",
+            key=f"{page_scope}_next_page",
+            use_container_width=True,
+            disabled=current_page >= total_pages,
+            on_click=_next_records_page,
+        )
+
+    for row_index, row in page_df.iterrows():
 
         st.markdown(
             '<div class="doc-card">',
@@ -3753,6 +3850,8 @@ if page_to_show == "Home":
             )
 
     if run_full_analysis:
+        # Start each new analysis from a fresh inbox snapshot.
+        st.session_state.pop("analysis_emails_cache", None)
         st.session_state["full_analysis_status"] = "running"
         st.session_state["full_analysis_index"] = 0
         st.session_state["full_analysis_counts"] = {
@@ -3872,7 +3971,17 @@ if page_to_show == "Home":
 
     if analysis_status == "running":
         try:
-            analysis_emails = list(load_inbox())
+            # ANALYSIS PERFORMANCE CACHE
+            # Load the 520-email inbox once for this analysis run,
+            # then reuse it across Streamlit reruns.
+            if "analysis_emails_cache" not in st.session_state:
+                st.session_state["analysis_emails_cache"] = list(
+                    load_inbox()
+                )
+
+            analysis_emails = st.session_state[
+                "analysis_emails_cache"
+            ]
             analysis_total = len(analysis_emails)
 
             start_index = int(
@@ -3941,6 +4050,10 @@ if page_to_show == "Home":
                     "Processed",
                     processed,
                 )
+                clear_metric.metric(
+                    "No Issues",
+                    int(counts.get("OK", 0)),
+                )
                 mismatch_metric.metric(
                     "Mismatch",
                     int(counts.get("MISMATCH", 0)),
@@ -3958,7 +4071,7 @@ if page_to_show == "Home":
                 analysis_emails,
                 progress_callback=update_analysis_progress,
                 start_index=start_index,
-                batch_size=5,
+                batch_size=10,
                 initial_counts=initial_counts,
                 initial_failures=initial_failures,
             )
@@ -4292,6 +4405,59 @@ if page_to_show == "Home":
         priority_sort,
     )
 
+    # HOME TABLE PAGINATION
+    # Only render a small number of records at once.
+    # This keeps the dashboard responsive even with 520+ emails.
+    home_page_size = 20
+    home_total_records = len(filtered_df)
+    home_total_pages = max(
+        1,
+        (home_total_records + home_page_size - 1)
+        // home_page_size,
+    )
+
+    if "home_table_page" not in st.session_state:
+        st.session_state["home_table_page"] = 1
+
+    # Clamp page number when filters/search reduce the result count.
+    st.session_state["home_table_page"] = min(
+        max(
+            int(st.session_state["home_table_page"]),
+            1,
+        ),
+        home_total_pages,
+    )
+
+    def _home_previous_page():
+        st.session_state["home_table_page"] = max(
+            1,
+            int(st.session_state.get("home_table_page", 1)) - 1,
+        )
+
+    def _home_next_page():
+        st.session_state["home_table_page"] = min(
+            home_total_pages,
+            int(st.session_state.get("home_table_page", 1)) + 1,
+        )
+
+    home_current_page = int(
+        st.session_state["home_table_page"]
+    )
+
+    home_start = (
+        (home_current_page - 1)
+        * home_page_size
+    )
+
+    home_end = min(
+        home_start + home_page_size,
+        home_total_records,
+    )
+
+    home_page_df = filtered_df.iloc[
+        home_start:home_end
+    ]
+
     st.markdown(
         """
         <div class="priority-header">
@@ -4347,7 +4513,38 @@ if page_to_show == "Home":
 
     else:
 
-        for index, row in filtered_df.iterrows():
+        page_info_col, prev_col, next_col = st.columns(
+            [4.0, 1.0, 1.0]
+        )
+
+        with page_info_col:
+            if home_total_records:
+                st.caption(
+                    f"Showing {home_start + 1}–{home_end} "
+                    f"of {home_total_records} records · "
+                    f"Page {home_current_page} "
+                    f"of {home_total_pages}"
+                )
+
+        with prev_col:
+            st.button(
+                "← Previous",
+                key="home_previous_page",
+                use_container_width=True,
+                disabled=home_current_page <= 1,
+                on_click=_home_previous_page,
+            )
+
+        with next_col:
+            st.button(
+                "Next →",
+                key="home_next_page",
+                use_container_width=True,
+                disabled=home_current_page >= home_total_pages,
+                on_click=_home_next_page,
+            )
+
+        for index, row in home_page_df.iterrows():
 
             row_cols = st.columns(
                 [1.0, 2.55, 1.1, .8, .8, 1.1, .7]
@@ -6528,6 +6725,244 @@ st.markdown(
     [data-testid="stMetricValue"] {
         font-weight: 650 !important;
     }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+
+# ============================================================
+# SHIPGUARD FINAL STABLE KPI THEME
+# Single source of truth for Home + Analytics KPI cards.
+# ============================================================
+
+st.markdown(
+    """
+    <style>
+
+    /* ========================================================
+       HOME: STREAMLIT METRICS
+       ======================================================== */
+
+    [data-testid="stMain"] [data-testid="stMetric"] {
+        background:
+            var(
+                --st-secondary-background-color,
+                var(--secondary-background-color)
+            ) !important;
+
+        border:
+            1px solid rgba(127, 127, 127, 0.28) !important;
+
+        border-radius: 18px !important;
+        padding: 18px 20px !important;
+
+        box-shadow:
+            0 10px 26px rgba(0, 0, 0, 0.08) !important;
+
+        transition:
+            transform 160ms ease,
+            border-color 160ms ease,
+            box-shadow 160ms ease !important;
+    }
+
+    [data-testid="stMain"] [data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
+
+        border-color:
+            var(
+                --st-primary-color,
+                var(--primary-color)
+            ) !important;
+
+        box-shadow:
+            0 14px 30px rgba(0, 0, 0, 0.11) !important;
+    }
+
+
+    /* Home metric labels */
+    [data-testid="stMain"] [data-testid="stMetricLabel"],
+    [data-testid="stMain"] [data-testid="stMetricLabel"] *,
+    [data-testid="stMain"] [data-testid="stMetricLabel"] p {
+        color:
+            var(
+                --st-text-color,
+                var(--text-color)
+            ) !important;
+
+        -webkit-text-fill-color:
+            var(
+                --st-text-color,
+                var(--text-color)
+            ) !important;
+
+        opacity: 0.82 !important;
+
+        font-size: 0.95rem !important;
+        font-weight: 700 !important;
+    }
+
+
+    /* Home metric numbers */
+    [data-testid="stMain"] [data-testid="stMetricValue"],
+    [data-testid="stMain"] [data-testid="stMetricValue"] *,
+    [data-testid="stMain"] [data-testid="stMetricValue"] div,
+    [data-testid="stMain"] [data-testid="stMetricValue"] p {
+        color:
+            var(
+                --st-text-color,
+                var(--text-color)
+            ) !important;
+
+        -webkit-text-fill-color:
+            var(
+                --st-text-color,
+                var(--text-color)
+            ) !important;
+
+        opacity: 1 !important;
+
+        font-size: 3rem !important;
+        font-weight: 900 !important;
+
+        line-height: 1 !important;
+        letter-spacing: -0.035em !important;
+
+        text-shadow: none !important;
+    }
+
+
+    /* ========================================================
+       ANALYTICS: DISCREPANCY INTELLIGENCE
+       ======================================================== */
+
+    [data-testid="stMain"] .sg-intelligence-card {
+        min-height: 132px;
+
+        padding: 16px 16px 14px;
+
+        border-radius: 16px;
+
+        border:
+            1px solid rgba(127, 127, 127, 0.28) !important;
+
+        background:
+            var(
+                --st-secondary-background-color,
+                var(--secondary-background-color)
+            ) !important;
+
+        box-shadow:
+            0 10px 26px rgba(0, 0, 0, 0.08);
+
+        box-sizing: border-box;
+
+        transition:
+            transform 160ms ease,
+            border-color 160ms ease,
+            box-shadow 160ms ease;
+    }
+
+    [data-testid="stMain"] .sg-intelligence-card:hover {
+        transform: translateY(-2px);
+
+        border-color:
+            var(
+                --st-primary-color,
+                var(--primary-color)
+            ) !important;
+
+        box-shadow:
+            0 14px 30px rgba(0, 0, 0, 0.11);
+    }
+
+
+    /* Analytics labels */
+    [data-testid="stMain"] .sg-intelligence-label {
+        color:
+            var(
+                --st-text-color,
+                var(--text-color)
+            ) !important;
+
+        -webkit-text-fill-color:
+            var(
+                --st-text-color,
+                var(--text-color)
+            ) !important;
+
+        opacity: 0.82 !important;
+
+        font-size: 13px;
+        font-weight: 700;
+
+        margin-bottom: 8px;
+    }
+
+
+    /* Analytics numbers */
+    [data-testid="stMain"] .sg-intelligence-value {
+        color:
+            var(
+                --st-text-color,
+                var(--text-color)
+            ) !important;
+
+        -webkit-text-fill-color:
+            var(
+                --st-text-color,
+                var(--text-color)
+            ) !important;
+
+        opacity: 1 !important;
+
+        font-size: 42px;
+        line-height: 1.05;
+
+        font-weight: 900;
+
+        letter-spacing: -0.035em;
+
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    [data-testid="stMain"] .sg-intelligence-value.compact {
+        font-size: 26px;
+        letter-spacing: -0.02em;
+    }
+
+
+    /* Top Issue count badge */
+    [data-testid="stMain"] .sg-intelligence-badge {
+        display: inline-block;
+
+        margin-top: 9px;
+
+        padding: 4px 9px;
+
+        border-radius: 999px;
+
+        background: #166534 !important;
+
+        color: #ecfdf5 !important;
+        -webkit-text-fill-color: #ecfdf5 !important;
+
+        font-size: 11px;
+        font-weight: 800;
+    }
+
+
+    /* Motion accessibility */
+    @media (prefers-reduced-motion: reduce) {
+        [data-testid="stMain"] [data-testid="stMetric"],
+        [data-testid="stMain"] .sg-intelligence-card {
+            transition: none !important;
+            transform: none !important;
+        }
+    }
+
     </style>
     """,
     unsafe_allow_html=True,
